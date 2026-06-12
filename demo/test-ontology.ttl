@@ -1,0 +1,20 @@
+@prefix ex: <https://example.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Person a owl:Class ;
+  rdfs:label "Person" .
+
+ex:email a owl:DatatypeProperty ;
+  rdfs:label "Email" ;
+  rdfs:domain ex:Person ;
+  rdfs:range xsd:string .
+
+ex:Order a owl:Class ;
+  rdfs:label "Order" .
+
+ex:amount a owl:DatatypeProperty ;
+  rdfs:label "Amount" ;
+  rdfs:domain ex:Order ;
+  rdfs:range xsd:decimal .
