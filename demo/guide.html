@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>text2shacl — Guide → Shapes</title>
+    <link rel="stylesheet" href="styles.css?v=7">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">CITIUS · text2shacl</p>
+        <h1>Guide → Shapes</h1>
+      </div>
+      <nav class="topnav">
+        <a class="navlink" href="index.html">Home</a>
+        <a class="navlink" href="rule.html">Rule → Shape</a>
+        <a class="navlink active" href="guide.html">Guide → Shapes</a>
+        <span class="status-pill" id="status-pill">Ready</span>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <aside class="rail" aria-label="Ontology and models">
+        <div class="panel-heading">
+          <h2>Ontology</h2>
+          <button class="icon-button" id="reset-demo" title="Reset" aria-label="Reset">↺</button>
+        </div>
+
+        <label class="file-drop" for="ontology-file">
+          <span>Upload ontology</span>
+          <small>.ttl, .rdf, .owl, .nt</small>
+        </label>
+        <input id="ontology-file" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt">
+        <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
+
+        <label class="field-label" for="base-namespace">Base namespace</label>
+        <input id="base-namespace" class="input" type="text" placeholder="Derived from the ontology">
+
+        <section class="inline-panel">
+          <h2>Models</h2>
+          <label class="field-label">Inference backend</label>
+          <div class="switcher provider-switch" role="group" aria-label="Inference backend">
+            <button class="switch-button active" data-provider="databricks">Databricks</button>
+            <button class="switch-button" data-provider="huggingface">HuggingFace</button>
+          </div>
+          <p class="microcopy">Credentials are read from <code>.env</code> (DATABRICKS_TOKEN / DATABRICKS_BASE_URL, or HF_TOKEN).</p>
+          <label class="field-label" for="llm-model">Generation LLM (multi-agent, chat)</label>
+          <select id="llm-model" class="input"></select>
+          <label class="field-label" for="text-model">Text model (summaries, chat)</label>
+          <select id="text-model" class="input"></select>
+          <label class="field-label" for="vision-model">Vision model (images, multimodal)</label>
+          <select id="vision-model" class="input"></select>
+          <label class="field-label" for="embedding-model">Embedding model (indexing)</label>
+          <select id="embedding-model" class="input"></select>
+        </section>
+      </aside>
+
+      <section class="canvas">
+        <div class="focus-layout">
+          <div class="evidence-column">
+            <section class="section-block">
+              <div class="section-title"><h2>Application guide</h2></div>
+              <label class="file-drop" for="guide-file">
+                <span>Upload guide</span>
+                <small>.html, .pdf</small>
+              </label>
+              <input id="guide-file" class="file-input" type="file" accept=".html,.htm,.pdf">
+              <p id="guide-summary" class="microcopy">No guide loaded.</p>
+
+              <label class="field-label" for="html-version">HTML version</label>
+              <select id="html-version" class="input">
+                <option value="3.2.1">3.2.1 (native HTML)</option>
+                <option value="1.6.1">1.6.1 (from PDF)</option>
+              </select>
+
+              <button id="generate-guide" class="primary-button full-width">Generate all SHACL shapes</button>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Progress</h2>
+                <span id="progress-tag" class="tag">0 / 0 SHACL shapes generated</span>
+              </div>
+              <div class="progress-track"><div id="progress-bar" class="progress-fill"></div></div>
+              <p id="progress-status" class="microcopy">Idle.</p>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Prefixes in scope</h2>
+                <button id="reset-prefixes" class="text-button">Reset</button>
+              </div>
+              <div class="code-wrap">
+                <pre class="code-highlight" aria-hidden="true"><code id="prefixes-editor-hl"></code></pre>
+                <textarea id="prefixes-editor" class="code-editor" spellcheck="false" wrap="off" style="min-height:150px"></textarea>
+              </div>
+            </section>
+          </div>
+
+          <div class="editor-column">
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Generated shapes</h2>
+                <span id="queue-count" class="tag">0 shapes</span>
+              </div>
+              <div id="queue-list" class="queue-list"></div>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2 id="editor-title">Editable shape</h2>
+                <button id="copy-shape" class="secondary-button">Copy</button>
+              </div>
+              <div class="code-wrap">
+                <pre class="code-highlight" aria-hidden="true"><code id="shape-editor-hl"></code></pre>
+                <textarea id="shape-editor" class="code-editor" spellcheck="false" wrap="off" placeholder="Select a generated shape to review and edit."></textarea>
+              </div>
+              <div class="editor-actions">
+                <button id="validate-shape" class="secondary-button">Check</button>
+                <button id="accept-shape" class="primary-button">Accept</button>
+              </div>
+              <div id="validation-panel" class="validation-panel">Upload a guide and generate shapes to start reviewing.</div>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Accepted shapes</h2>
+                <span id="coverage-tag" class="tag">0 accepted</span>
+              </div>
+              <div id="accepted-list" class="accepted-list"></div>
+              <button id="export-shapes" class="primary-button full-width">Export accepted shapes (.ttl)</button>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="common.js?v=7"></script>
+    <script src="guide.js?v=7"></script>
+  </body>
+</html>

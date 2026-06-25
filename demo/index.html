@@ -3,160 +3,52 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>text2shacl demo</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>text2shacl — SHACL co-construction</title>
+    <link rel="stylesheet" href="styles.css?v=3">
   </head>
   <body>
     <header class="topbar">
-      <div>
+      <div class="brand">
         <p class="eyebrow">CITIUS · text2shacl</p>
-        <h1>Co-construct SHACL shapes from an ontology and business rules</h1>
+        <h1>SHACL co-construction</h1>
       </div>
-      <div class="status-pill" id="status-pill">Ready</div>
+      <nav class="topnav">
+        <a class="navlink active" href="index.html">Home</a>
+        <a class="navlink" href="rule.html">Rule → Shape</a>
+        <a class="navlink" href="guide.html">Guide → Shapes</a>
+      </nav>
     </header>
 
-    <main class="workspace">
-      <aside class="rail" aria-label="Ontology browser">
-        <div class="panel-heading">
-          <h2>Ontology</h2>
-          <button class="icon-button" id="reset-demo" title="Reset demo" aria-label="Reset demo">↺</button>
-        </div>
+    <main class="landing">
+      <p class="lead">
+        Generate SHACL validation shapes from an OWL ontology and its business rules.
+        Choose a workflow: turn a single hand-written rule into one shape, or translate a
+        whole application guide (HTML or PDF) into the full set of shapes, reviewing each
+        one as it is produced.
+      </p>
 
-        <section class="upload-panel">
-          <label class="file-drop" for="ontology-file">
-            <span>Upload ontology</span>
-            <small>.ttl, .rdf, .owl, .nt</small>
-          </label>
-          <input id="ontology-file" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt">
-          <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
-        </section>
+      <div class="cards">
+        <a class="card" href="rule.html">
+          <p class="step">Workflow 1</p>
+          <h2>Rule → Shape</h2>
+          <p>Write a business rule, pick the ontology target, and generate a single SHACL
+             shape you can edit, validate and accept.</p>
+        </a>
+        <a class="card" href="guide.html">
+          <p class="step">Workflow 2</p>
+          <h2>Guide → Shapes</h2>
+          <p>Upload the full application guide (HTML or PDF). The multi-agent pipeline
+             generates every shape and streams them in for review one by one.</p>
+        </a>
+      </div>
 
-        <section class="inline-panel" aria-label="API configuration">
-          <h2>Model API</h2>
-          <input id="api-provider" type="hidden" value="databricks">
-
-          <label class="field-label" for="api-model">Model</label>
-          <select id="api-model" class="input">
-            <option value="databricks-qwen35-122b-a10b">databricks-qwen35-122b-a10b</option>
-            <option value="databricks-gpt-oss-120b">databricks-gpt-oss-120b</option>
-            <option value="databricks-gpt-oss-20b">databricks-gpt-oss-20b</option>
-            <option value="databricks-gemma-3-12b">databricks-gemma-3-12b</option>
-            <option value="databricks-llama-4-maverick">databricks-llama-4-maverick</option>
-            <option value="databricks-meta-llama-3-1-8b-instruct">databricks-meta-llama-3-1-8b-instruct</option>
-            <option value="databricks-meta-llama-3-3-70b-instruct">databricks-meta-llama-3-3-70b-instruct</option>
-          </select>
-
-          <label class="field-label" for="api-key">API key</label>
-          <input id="api-key" class="input" type="password" placeholder="Paste Databricks API key">
-          <p class="microcopy">The local dummy services receive this Databricks configuration but do not call the external endpoint yet.</p>
-        </section>
-
-        <div class="switcher" role="group" aria-label="Ontology entity type">
-          <button class="switch-button active" data-filter="all">All</button>
-          <button class="switch-button" data-filter="class">Classes</button>
-          <button class="switch-button" data-filter="property">Properties</button>
-        </div>
-
-        <label class="field-label" for="entity-search">Search</label>
-        <input id="entity-search" class="input" type="search" placeholder="Label, IRI, domain, range">
-        <div id="entity-list" class="entity-list"></div>
-
-      </aside>
-
-      <section class="canvas">
-        <section class="focus-layout">
-          <div class="evidence-column">
-            <section class="section-block">
-              <div class="section-title">
-                <h2>Business rule</h2>
-                <button id="add-rule" class="text-button">Save rule</button>
-              </div>
-              <textarea id="business-rule" class="textarea large" placeholder="Write a business rule here."></textarea>
-              <button id="analyze-rule" class="primary-button full-width">Find relevant ontology terms</button>
-              <div id="rule-cards" class="rule-cards"></div>
-            </section>
-
-            <section class="section-block">
-              <div class="section-title">
-                <h2>Relevant ontology terms</h2>
-                <span id="candidate-count" class="tag">0 matches</span>
-              </div>
-              <div id="candidate-list" class="candidate-list"></div>
-            </section>
-
-            <section class="section-block">
-              <div class="section-title">
-                <h2 id="selected-label">Selected target</h2>
-                <span id="selected-kind" class="tag">Datatype property</span>
-              </div>
-              <dl class="metadata-grid">
-                <div>
-                  <dt>IRI</dt>
-                  <dd id="selected-iri"></dd>
-                </div>
-                <div>
-                  <dt>Domain / class</dt>
-                  <dd id="selected-domain"></dd>
-                </div>
-                <div>
-                  <dt>Range</dt>
-                  <dd id="selected-range"></dd>
-                </div>
-              </dl>
-              <label class="field-label" for="ontology-note">Ontology context</label>
-              <textarea id="ontology-note" class="textarea compact"></textarea>
-            </section>
-
-            <section class="section-block">
-              <div class="section-title">
-                <h2>Detected constraints</h2>
-                <span id="hint-count" class="tag">0 hints</span>
-              </div>
-              <div id="hint-list" class="hint-list"></div>
-              <button id="regenerate" class="primary-button full-width">Build SHACL shape</button>
-            </section>
-          </div>
-
-          <div class="editor-column">
-            <section class="section-block editor-block">
-              <div class="section-title">
-                <h2>Editable shape</h2>
-                <button id="copy-shape" class="secondary-button">Copy</button>
-              </div>
-              <textarea id="shape-editor" class="code-editor" spellcheck="false"></textarea>
-              <div class="editor-actions">
-                <button id="validate-shape" class="secondary-button">Check</button>
-                <button id="accept-shape" class="primary-button">Accept</button>
-              </div>
-              <div id="validation-panel" class="validation-panel"></div>
-            </section>
-
-            <section class="section-block review-block">
-              <div class="section-title">
-                <h2>Accepted shapes</h2>
-                <span id="coverage-tag" class="tag">0 accepted</span>
-              </div>
-              <div class="review-grid">
-                <label class="check-row">
-                  <input type="checkbox" id="check-grounded">
-                  The rule supports the constraint
-                </label>
-                <label class="check-row">
-                  <input type="checkbox" id="check-scope">
-                  The ontology scope is correct
-                </label>
-                <label class="check-row">
-                  <input type="checkbox" id="check-operative">
-                  The shape is ready to test
-                </label>
-              </div>
-              <div id="accepted-list" class="accepted-list"></div>
-            </section>
-          </div>
-        </section>
-      </section>
+      <p class="microcopy" style="margin-top:28px">
+        Both workflows share the same ontology, model configuration, prefixes and accepted-shape
+        list. Set them once; they persist as you move between pages. Inference runs through the
+        text2shacl model loader (Databricks by default — no local GPU required).
+      </p>
     </main>
 
-    <script src="app.js"></script>
+    <script src="common.js?v=3"></script>
   </body>
 </html>

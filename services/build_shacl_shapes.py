@@ -1,179 +1,194 @@
 #!/usr/bin/env python3
-"""Service for building SHACL shapes from a rule and selected target."""
+"""
+build-shacl-shape service  (br2shacl-ui)  — Mode A (single rule)
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+Generates a SHACL shape for one selected ontology target from a hand-written
+business rule, reusing the real text2shacl generator:
+
+  * prompts/multiagent.json → generator_agent_property_without_astrea
+    (and ..._with_error on a failed parse)
+  * utils.clean_shacl_response to extract the Turtle
+  * the rdflib parse-and-retry loop ported from multiagent._generator_agent
+  * model_loader.get_chat_llm for inference (Databricks or HF, routed by id)
+
+The hand-written rule plays the role of the RAG evidence. The ontology context is
+rebuilt by re-parsing the uploaded ontology and calling the same helpers the
+OntologyAgent uses (get_info_by_name, get_property_domain), so the model gets the
+rich context, not just the flattened term.
+
+Endpoint:  POST http://127.0.0.1:9102/build-shacl-shape
+  request : {business_rule, target, prefixes, ontology_content, model, provider,
+             temperature?, base_namespace?}
+  response: {shape, valid, error, attempts, hints[], fallback, message}
+"""
+
 import json
-import re
+import os
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
-class MissingOpenAIError(Exception):
-    pass
-
-
-try:
-    from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
-except ImportError:
-    APIConnectionError = APIError = APITimeoutError = None
-    OpenAI = None
-
-OPENAI_ERRORS = tuple(error for error in (APIConnectionError, APIError, APITimeoutError) if error) or (MissingOpenAIError,)
-
+from rdflib import Graph
+from langchain_core.output_parsers import StrOutputParser
 
 HOST = "127.0.0.1"
 PORT = 9102
-DATABRICKS_BASE_URL = "https://dbc-89ad3629-477e.cloud.databricks.com/ai-gateway/mlflow/v1"
+MAX_RETRIES = 10
 
 
-def shape_name(target):
-    label = target.get("label") or "target"
-    compact = re.sub(r"[^A-Za-z0-9]+", " ", label).strip().title().replace(" ", "")
-    return f"ex:{compact or 'Target'}Shape"
+def _build_ontology_info(ontology_content, target):
+    """Rebuild ontology context for the target, mirroring OntologyAgent iter 0."""
+    from utils import get_info_by_name, get_property_domain
+
+    if not ontology_content:
+        # No ontology content: fall back to the flattened note from the UI.
+        return f"# {target.get('iri')}\n{target.get('ontologyNote', '')}\n"
+
+    g = Graph(bind_namespaces="none")
+    g.parse(data=ontology_content, format="turtle")
+
+    prop = target.get("full_iri") or target.get("iri")
+    info = ""
+    prop_info = get_info_by_name(g, prop)
+    if prop_info:
+        info += f"# {prop}\n{prop_info}\n\n"
+
+    if target.get("type") == "property":
+        domain = get_property_domain(g, prop)
+        if domain:
+            info += f"Domain of {prop}: {domain}\n\n"
+            for owl_class in domain:
+                cls_info = get_info_by_name(g, owl_class)
+                if cls_info:
+                    info += f"## {owl_class}\n{cls_info}\n\n"
+    return info or f"# {prop}\n{target.get('ontologyNote', '')}\n"
 
 
-def build_constraints(rule, target):
-    constraints = []
+def _hints_from_shape(shape_str, prefixes):
+    """Derive constraint hints by listing sh:* predicates present in the shape."""
     hints = []
-    kind = target.get("kind", "")
-    target_type = target.get("type", "")
-    range_value = target.get("range", "")
-
-    if target_type == "property":
-        if re.search(r"must|shall|required|mandatory|every|each", rule, re.I):
-            constraints.append("sh:minCount 1")
-            hints.append({"reason": "dummy service detected required value", "constraint": "sh:minCount 1"})
-        if re.search(r"exactly one|single|unique|only one", rule, re.I):
-            constraints.append("sh:maxCount 1")
-            hints.append({"reason": "dummy service detected single value", "constraint": "sh:maxCount 1"})
-        if re.search(r"greater than 0|positive|above 0", rule, re.I):
-            constraints.append("sh:minInclusive 1")
-            hints.append({"reason": "dummy service detected positive numeric rule", "constraint": "sh:minInclusive 1"})
-        if re.search(r"email|e-mail", rule, re.I):
-            constraints.append('sh:pattern "^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$"')
-            hints.append({"reason": "dummy service detected email format", "constraint": "sh:pattern"})
-        if kind == "ObjectProperty" or (range_value and not range_value.startswith("xsd:")):
-            if range_value:
-                constraints.append(f"sh:class {range_value}")
-                hints.append({"reason": "ontology range used as SHACL class", "constraint": f"sh:class {range_value}"})
-            constraints.append("sh:nodeKind sh:IRI")
-            hints.append({"reason": "object property values should be IRIs", "constraint": "sh:nodeKind sh:IRI"})
-        elif range_value.startswith("xsd:"):
-            constraints.append(f"sh:datatype {range_value}")
-            hints.append({"reason": "ontology range used as datatype", "constraint": f"sh:datatype {range_value}"})
-    else:
-        constraints.append('sh:message "Dummy class-level rule: review and add property constraints where needed."')
-        hints.append({"reason": "dummy service produced a class-level placeholder", "constraint": "sh:message"})
-
-    if not constraints:
-        constraints.append('sh:message "Dummy SHACL proposal: review this rule with a domain expert."')
-        hints.append({"reason": "dummy fallback", "constraint": "sh:message"})
-
-    return constraints, hints
+    try:
+        g = Graph(bind_namespaces="none")
+        g.parse(data=f"{prefixes}\n{shape_str}", format="turtle")
+        SH = "http://www.w3.org/ns/shacl#"
+        for s, p, o in g:
+            if str(p).startswith(SH):
+                local = str(p).rsplit("#", 1)[-1]
+                if local in {"path", "targetClass", "property"}:
+                    continue
+                try:
+                    oq = g.qname(o)
+                except Exception:
+                    oq = str(o)
+                hints.append({"reason": f"constraint sh:{local}", "constraint": f"sh:{local} {oq}"})
+    except Exception:
+        pass
+    # de-duplicate, cap
+    seen, out = set(), []
+    for h in hints:
+        if h["constraint"] not in seen:
+            seen.add(h["constraint"])
+            out.append(h)
+    return out[:12]
 
 
 def build_shape(payload):
+    from model_loader import get_chat_llm, DEFAULT_GEN_MAX_NEW_TOKENS
+    from prompts import load_prompt_from_json
+    from utils import clean_shacl_response
+    from Logger import logger
+    import ns_utils
+
     target = payload.get("target") or {}
     rule = payload.get("business_rule", "")
-    prefixes = payload.get("prefixes") or "@prefix ex: <https://example.org/shapes/> .\n@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
-    constraints, hints = build_constraints(rule, target)
+    domain_context = (payload.get("domain_context") or "").strip() or "(none provided)"
+    generation_guidance = (payload.get("generation_guidance") or "").strip() or "(none provided)"
+    prefixes = payload.get("prefixes") or ""
+    ontology_content = payload.get("ontology_content", "")
+    temperature = float(payload.get("temperature", 0.5))
+    model_id = payload.get("model") or "databricks-gpt-oss-120b"
 
-    if target.get("type") == "class":
-        header = [
-            f"{shape_name(target)} a sh:NodeShape ;",
-            f"  sh:targetClass {target.get('iri', 'ex:Class')} ;",
-        ]
-    else:
-        header = [
-            f"{shape_name(target)} a sh:PropertyShape ;",
-            f"  sh:targetClass {target.get('domain') or 'ex:Class'} ;",
-            f"  sh:path {target.get('iri') or 'ex:property'} ;",
-        ]
+    base_ns = payload.get("base_namespace") or ""
+    if not base_ns and ontology_content:
+        g = Graph(bind_namespaces="none")
+        g.parse(data=ontology_content, format="turtle")
+        base_ns = ns_utils.derive_base_namespace(g)
 
-    body = [f"  {line}{' .' if index == len(constraints) - 1 else ' ;'}" for index, line in enumerate(constraints)]
-    return f"{prefixes.strip()}\n\n" + "\n".join(header + body), hints
+    logger.info(f"[build] target={target.get('iri')} type={target.get('type')} model={model_id}")
+    ontology_info = _build_ontology_info(ontology_content, target)
 
+    prompt_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "text2shacl_core", "prompts")
+    prompt_file = os.path.join(prompt_dir, "rule_general.json")
 
-def target_summary(target):
-    return json.dumps(
-        {
-            "type": target.get("type"),
-            "label": target.get("label"),
-            "iri": target.get("iri"),
-            "kind": target.get("kind"),
-            "domain": target.get("domain"),
-            "range": target.get("range"),
-            "ontologyNote": target.get("ontologyNote"),
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+    gen_model = get_chat_llm(model_id, kind="generator", temperature=temperature,
+                             max_new_tokens=DEFAULT_GEN_MAX_NEW_TOKENS)
 
+    attempt = 0
+    error_message = None
+    last_result = ""
 
-def databricks_messages(payload):
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You generate SHACL shapes from business rules and ontology context. "
-                "Return only valid Turtle. Do not wrap the answer in Markdown. "
-                "Use the provided prefixes and do not invent ontology terms."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                "Build a SHACL shape for the selected ontology target.\n\n"
-                "--- PREFIXES ---\n"
-                f"{payload.get('prefixes') or ''}\n\n"
-                "--- BUSINESS RULE ---\n"
-                f"{payload.get('business_rule') or ''}\n\n"
-                "--- SELECTED TARGET ---\n"
-                f"{target_summary(payload.get('target') or {})}\n\n"
-                "If the target is a property, create a sh:PropertyShape with sh:targetClass and sh:path. "
-                "If the target is a class, create a sh:NodeShape with sh:targetClass. "
-                "Add only constraints supported by the rule or ontology context."
-            ),
-        },
-    ]
+    while attempt < MAX_RETRIES:
+        key = "generator_with_error" if error_message else "generator"
+        logger.debug(f"[build] attempt {attempt + 1}/{MAX_RETRIES} using prompt '{key}'")
+        prompt = load_prompt_from_json(prompt_file, key)
+        chain = prompt | gen_model | StrOutputParser()
 
+        invoke_vars = {
+            "property": target.get("full_iri") or target.get("iri"),
+            "prefixes": prefixes,
+            "ontology_info": ontology_info,
+            "domain_context": domain_context,
+            "rule": rule,
+            "generation_guidance": generation_guidance,
+            "shacl_history": "(none)",
+        }
+        if error_message:
+            invoke_vars["previous_invalid_shapes"] = last_result
+            invoke_vars["error"] = error_message
 
-def strip_markdown_fence(content):
-    text = content.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    return text.strip()
+        try:
+            result = chain.invoke(invoke_vars)
+        except Exception as e:
+            # Backend/credentials/endpoint error — NOT a Turtle parse error.
+            logger.error(f"[build] backend error: {e}")
+            return {"shape": "", "valid": False, "error": str(e), "attempts": attempt,
+                    "hints": [], "fallback": False, "error_type": "backend",
+                    "message": f"Backend error calling the model: {e}"}
+        last_result = clean_shacl_response(result)
 
+        if "SHACL shapes not found" in result:
+            logger.info("[build] model reported: SHACL shapes not found")
+            return {"shape": "", "valid": False, "error": None, "attempts": attempt + 1,
+                    "hints": [], "fallback": False, "not_found": True,
+                    "message": "The model reported no shape can be justified from this rule and context."}
 
-def call_databricks(payload):
-    api_key = payload.get("api_key")
-    model = payload.get("model")
-    timeout = float(payload.get("timeout") or 10)
-    if not api_key:
-        raise ValueError("Missing Databricks API key")
-    if not model:
-        raise ValueError("Missing Databricks model")
-    if OpenAI is None:
-        raise ValueError("Missing openai package. Run: python3 -m pip install -r requirements.txt")
+        try:
+            Graph(bind_namespaces="none").parse(data=f"{prefixes}\n{last_result}", format="turtle")
+        except Exception as e:
+            logger.warn(f"[build] parse failed on attempt {attempt + 1}: {e}")
+            error_message = str(e)
+            attempt += 1
+            continue
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url=DATABRICKS_BASE_URL,
-        timeout=timeout,
-        max_retries=0,
-    )
+        logger.info(f"[build] valid SHACL on attempt {attempt + 1}")
+        hints = _hints_from_shape(last_result, prefixes)
+        return {"shape": last_result, "valid": True, "error": None, "attempts": attempt + 1,
+                "hints": hints, "fallback": False, "error_type": "none",
+                "message": f"Valid SHACL generated by '{model_id}' (attempt {attempt + 1})."}
 
-    completion = client.chat.completions.create(
-        messages=databricks_messages(payload),
-        model=model,
-        max_tokens=int(payload.get("max_tokens") or 1024),
-        timeout=timeout,
-    )
-    response_payload = completion.model_dump()
-    content = completion.choices[0].message.content or ""
-    return strip_markdown_fence(content), response_payload
+    # Retries exhausted: return the invalid shape with the parse error.
+    logger.error(f"[build] exhausted {MAX_RETRIES} attempts; last parse error: {error_message}")
+    return {"shape": last_result, "valid": False, "error": error_message, "attempts": MAX_RETRIES,
+            "hints": [], "fallback": False, "error_type": "parse",
+            "message": f"Reached {MAX_RETRIES} attempts; returning last output with its parse error."}
 
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
     def _send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -189,41 +204,42 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True})
 
     def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = json.loads(self.rfile.read(length) or b"{}")
+
+        # Real rdflib Turtle validation for the editor "Check" button.
+        if self.path == "/validate-shape":
+            shape = payload.get("shape", "")
+            prefixes = payload.get("prefixes", "")
+            try:
+                Graph(bind_namespaces="none").parse(data=f"{prefixes}\n{shape}", format="turtle")
+                self._send_json(200, {"valid": True, "error": None})
+            except Exception as exc:
+                self._send_json(200, {"valid": False, "error": str(exc)})
+            return
+
         if self.path != "/build-shacl-shape":
             self._send_json(404, {"error": "unknown endpoint"})
             return
 
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
-        hints = []
-        raw_response = None
-        used_fallback = False
+        # Capture the original project's debug prints (Logger + model_loader)
+        # emitted during this generation, and return them to the UI Logs panel.
+        import contextlib, io
+        from Logger import logger
+        logger.set_verbosity(3)
+        buf = io.StringIO()
         try:
-            shape, raw_response = call_databricks(payload)
-            hints = [{"reason": "Databricks response content", "constraint": "choices[0].message.content"}]
-            message = "Databricks SHACL generation completed."
-        except (ValueError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
-            shape, hints = build_shape(payload)
-            used_fallback = True
-            message = f"Databricks call failed; returned dummy fallback. {exc}"
-        except OPENAI_ERRORS as exc:
-            shape, hints = build_shape(payload)
-            used_fallback = True
-            message = f"Databricks call failed; returned dummy fallback. {exc}"
-
-        self._send_json(
-            200,
-            {
-                "provider": payload.get("provider"),
-                "model": payload.get("model"),
-                "shape": shape,
-                "hints": hints,
-                "raw_content": shape,
-                "raw_response": raw_response,
-                "fallback": used_fallback,
-                "message": message,
-            },
-        )
+            with contextlib.redirect_stdout(buf):
+                result = build_shape(payload)
+        except Exception as exc:
+            self._send_json(200, {"shape": "", "valid": False, "error": str(exc),
+                                  "attempts": 0, "hints": [], "fallback": True,
+                                  "logs": buf.getvalue(),
+                                  "message": f"build-shacl-shape failed: {exc}"})
+            return
+        self._send_json(200, {"provider": payload.get("provider"),
+                              "model": payload.get("model"),
+                              "logs": buf.getvalue(), **result})
 
 
 if __name__ == "__main__":

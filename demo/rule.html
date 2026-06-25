@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>text2shacl — Rule → Shape</title>
+    <link rel="stylesheet" href="styles.css?v=7">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">CITIUS · text2shacl</p>
+        <h1>Rule → Shape</h1>
+      </div>
+      <nav class="topnav">
+        <a class="navlink" href="index.html">Home</a>
+        <a class="navlink active" href="rule.html">Rule → Shape</a>
+        <a class="navlink" href="guide.html">Guide → Shapes</a>
+        <button class="logs-button" id="logs-toggle" type="button">Logs</button>
+        <span class="status-pill" id="status-pill">Ready</span>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <!-- ── Column 1: Ontology + Models only ── -->
+      <aside class="rail" aria-label="Ontology and models">
+        <div class="panel-heading">
+          <h2>Ontology</h2>
+          <button class="icon-button" id="reset-demo" title="Reset" aria-label="Reset">↺</button>
+        </div>
+
+        <label class="file-drop" for="ontology-file">
+          <span>Upload ontology</span>
+          <small>.ttl, .rdf, .owl, .nt</small>
+        </label>
+        <input id="ontology-file" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt">
+        <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
+
+        <label class="field-label" for="base-namespace">Base namespace</label>
+        <input id="base-namespace" class="input" type="text" placeholder="Derived from the ontology">
+
+        <section class="inline-panel">
+          <h2>Models</h2>
+          <label class="field-label">Inference backend</label>
+          <div class="switcher provider-switch" role="group" aria-label="Inference backend">
+            <button class="switch-button active" data-provider="databricks">Databricks</button>
+            <button class="switch-button" data-provider="huggingface">HuggingFace</button>
+          </div>
+          <p class="microcopy">Credentials are read from <code>.env</code> (DATABRICKS_TOKEN / DATABRICKS_BASE_URL, or HF_TOKEN).</p>
+          <label class="field-label" for="llm-model">Generation LLM (chat)</label>
+          <select id="llm-model" class="input"></select>
+          <label class="field-label" for="embedding-model">Embedding model (term ranking)</label>
+          <select id="embedding-model" class="input"></select>
+        </section>
+      </aside>
+
+      <section class="canvas">
+        <div class="focus-layout">
+          <!-- ── Column 2: context + rule + search + target ── -->
+          <div class="evidence-column">
+            <section class="section-block">
+              <div class="section-title"><h2>Generation context</h2></div>
+              <label class="field-label" for="domain-context">Domain context</label>
+              <textarea id="domain-context" class="textarea compact" placeholder="Background about the domain the ontology models (e.g. railway infrastructure registers, units, conventions)."></textarea>
+              <label class="field-label" for="generation-guidance">SHACL generation guidance</label>
+              <textarea id="generation-guidance" class="textarea compact" placeholder="Hints on how to generate the shapes (e.g. always add sh:message, prefer sh:pattern for codes, keep cardinalities strict)."></textarea>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title"><h2>Business rule</h2></div>
+              <textarea id="business-rule" class="textarea large" placeholder="e.g. Every Track must have exactly one nominal track gauge in millimetres."></textarea>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Search ontology</h2>
+                <div class="switcher" role="group" aria-label="Entity type filter" style="margin-top:0;max-width:220px">
+                  <button class="switch-button active" data-filter="all">All</button>
+                  <button class="switch-button" data-filter="class">Classes</button>
+                  <button class="switch-button" data-filter="property">Properties</button>
+                </div>
+              </div>
+              <div class="ontology-search-row">
+                <input id="entity-search" class="input" type="search" placeholder="Label, IRI, domain, range">
+                <button id="analyze-rule" class="secondary-button">Related to business rule</button>
+                <button id="clear-related-terms" class="text-button" hidden>Show all</button>
+              </div>
+              <p id="ontology-search-status" class="microcopy">Search by text or rank terms against the business rule.</p>
+              <div id="entity-list" class="entity-list" style="max-height:248px"></div>
+            </section>
+          </div>
+
+          <!-- ── Column 3: prefixes (top) + target + editor + accepted ── -->
+          <div class="editor-column">
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Prefixes in scope</h2>
+                <button id="reset-prefixes" class="text-button">Reset</button>
+              </div>
+              <div class="code-wrap">
+                <pre class="code-highlight" aria-hidden="true"><code id="prefixes-editor-hl"></code></pre>
+                <textarea id="prefixes-editor" class="code-editor" spellcheck="false" wrap="off" style="min-height:150px"></textarea>
+              </div>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2 id="selected-label">Selected target</h2>
+                <span id="selected-kind" class="tag">—</span>
+              </div>
+              <dl class="metadata-grid">
+                <div><dt>IRI</dt><dd id="selected-iri"></dd></div>
+                <div><dt>Domain / class</dt><dd id="selected-domain"></dd></div>
+                <div><dt>Range</dt><dd id="selected-range"></dd></div>
+              </dl>
+              <label class="field-label" for="ontology-note">Ontology context</label>
+              <textarea id="ontology-note" class="textarea compact" placeholder="Pick a target in the Search ontology panel (or it will be filled from the ontology)."></textarea>
+              <button id="generate-shape" class="primary-button full-width" disabled>Generate SHACL shape</button>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2 id="editor-title">Editable shape</h2>
+                <button id="copy-shape" class="secondary-button">Copy</button>
+              </div>
+              <div class="code-wrap">
+                <pre class="code-highlight" aria-hidden="true"><code id="shape-editor-hl"></code></pre>
+                <textarea id="shape-editor" class="code-editor" spellcheck="false" wrap="off" placeholder="The generated SHACL shape appears here."></textarea>
+              </div>
+              <div class="editor-actions">
+                <button id="validate-shape" class="secondary-button">Check</button>
+                <button id="accept-shape" class="primary-button">Accept</button>
+              </div>
+              <div id="validation-panel" class="validation-panel">Write a rule, choose a target, and generate a shape.</div>
+            </section>
+
+            <section class="section-block">
+              <div class="section-title">
+                <h2>Accepted shapes</h2>
+                <span id="coverage-tag" class="tag">0 accepted</span>
+              </div>
+              <div id="accepted-list" class="accepted-list"></div>
+              <button id="export-shapes" class="primary-button full-width">Export accepted shapes (.ttl)</button>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <section class="logs-drawer" id="logs-drawer" aria-label="Execution logs">
+      <div class="logs-drawer-bar">
+        <span>Execution logs (last generation)</span>
+        <button id="logs-close" type="button">Close</button>
+      </div>
+      <pre class="logs-content" id="logs-content">No logs yet. Generate a shape to see the pipeline output here.</pre>
+    </section>
+
+    <script src="common.js?v=7"></script>
+    <script src="rule.js?v=7"></script>
+  </body>
+</html>
