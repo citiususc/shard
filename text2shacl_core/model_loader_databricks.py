@@ -15,10 +15,11 @@ Text / Chat     meta-llama/Llama-3.3-70B-Instruct  llama3_3_70b
 Vision          OpenGVLab/InternVL3_5-38B          gemma_3_12b
 Embeddings      BAAI/bge-large-en-v1.5             qwen3_embedding_0_6b
 
-REQUIRED ENVIRONMENT VARIABLES
--------------------------------
-DATABRICKS_TOKEN        personal access token (dapi...)
-DATABRICKS_BASE_URL     AI Gateway base URL  (e.g. https://<workspace>/mlflow/v1)
+CONFIGURATION
+-------------
+The demo UI sends Databricks token and AI Gateway base URL per request.
+Environment variables with the old names are still accepted as an optional
+fallback when the loader is used outside the UI.
 
 USAGE
 -----
@@ -54,6 +55,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import Runnable
 
 from Logger import logger
+from runtime_config import get_databricks_base_url, get_databricks_token
 
 # ---------------------------------------------------------------------------
 # Default endpoint names
@@ -80,33 +82,32 @@ _TEXT_MODEL_CACHE: Dict[Tuple, Any] = {}
 # ---------------------------------------------------------------------------
 
 def _get_credentials() -> Tuple[str, str]:
-    token = os.environ.get("DATABRICKS_TOKEN", "")
-    base_url = os.environ.get("DATABRICKS_BASE_URL", "").rstrip("/")
+    token = get_databricks_token()
+    base_url = get_databricks_base_url()
 
     if not token or not base_url:
         logger.error("Databricks credentials are not configured.")
         raise EnvironmentError(
             "Databricks credentials not set.\n"
-            "Export the following environment variables before running:\n"
-            "  export DATABRICKS_TOKEN=dapi...\n"
-            "  export DATABRICKS_BASE_URL=https://<workspace>/mlflow/v1"
+            "Configure Databricks token and base URL in the UI model settings."
         )
 
     logger.debug(f"Using Databricks base URL: {base_url}")
     return token, base_url
 
 
-# OpenAI client -> used only for embeddings (no field renaming issues there)
-_OAI_CLIENT: Optional[OpenAI] = None
+# OpenAI client -> used only for embeddings (no field renaming issues there).
+# Cache per credential/base URL pair so different browser sessions can coexist.
+_OAI_CLIENTS: Dict[Tuple[str, str], OpenAI] = {}
 
 
 def _oai_client() -> OpenAI:
-    global _OAI_CLIENT
-    if _OAI_CLIENT is None:
-        logger.debug("Initializing shared OpenAI-compatible client for Databricks embeddings.")
-        token, base_url = _get_credentials()
-        _OAI_CLIENT = OpenAI(api_key=token, base_url=base_url)
-    return _OAI_CLIENT
+    token, base_url = _get_credentials()
+    key = (base_url, token)
+    if key not in _OAI_CLIENTS:
+        logger.debug("Initializing OpenAI-compatible client for Databricks embeddings.")
+        _OAI_CLIENTS[key] = OpenAI(api_key=token, base_url=base_url)
+    return _OAI_CLIENTS[key]
 
 # ---------------------------------------------------------------------------
 # Message parsing helpers

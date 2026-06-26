@@ -18,7 +18,7 @@ rich context, not just the flattened term.
 
 Endpoint:  POST http://127.0.0.1:9102/build-shacl-shape
   request : {business_rule, target, prefixes, ontology_content, model, provider,
-             temperature?, base_namespace?}
+             temperature?, inference_config?, base_namespace?}
   response: {shape, valid, error, attempts, hints[], fallback, message}
 """
 
@@ -35,6 +35,10 @@ from langchain_core.output_parsers import StrOutputParser
 HOST = "127.0.0.1"
 PORT = 9102
 MAX_RETRIES = 10
+
+
+def _runtime_config(payload):
+    return payload.get("inference_config") or payload.get("model_config") or payload
 
 
 def _build_ontology_info(ontology_content, target):
@@ -185,6 +189,71 @@ def build_shape(payload):
             "message": f"Reached {MAX_RETRIES} attempts; returning last output with its parse error."}
 
 
+def validate_model(payload):
+    """Lightweight availability check before a custom model is added in the UI."""
+    provider = str(payload.get("provider") or "").strip().lower()
+    model = str(payload.get("model") or "").strip()
+    role = str(payload.get("role") or "chat").strip().lower()
+
+    if not model:
+        return {"ok": False, "message": "Enter a model id first."}
+    if provider not in {"databricks", "huggingface"}:
+        return {"ok": False, "message": "Choose Databricks or Hugging Face first."}
+
+    if provider == "databricks":
+        import httpx
+        from runtime_config import get_databricks_base_url, get_databricks_token
+
+        token = get_databricks_token()
+        base_url = get_databricks_base_url()
+        if not token or not base_url:
+            return {
+                "ok": False,
+                "message": "Databricks token and base URL are required to validate this model.",
+            }
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        if role == "embedding":
+            url = f"{base_url}/embeddings"
+            body = {"model": model, "input": ["ping"]}
+        else:
+            url = f"{base_url}/chat/completions"
+            body = {
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+                "temperature": 0,
+            }
+
+        try:
+            res = httpx.post(url, headers=headers, json=body, timeout=20)
+        except Exception as exc:
+            return {"ok": False, "message": f"Could not reach Databricks endpoint: {exc}"}
+
+        if 200 <= res.status_code < 300:
+            return {"ok": True, "message": f"Model '{model}' is available."}
+        detail = res.text[:500]
+        return {
+            "ok": False,
+            "message": f"Databricks rejected '{model}' ({res.status_code}): {detail}",
+        }
+
+    # Hugging Face: check repository visibility/access without downloading weights.
+    try:
+        from huggingface_hub import model_info
+        from runtime_config import get_hf_token
+
+        info = model_info(model, token=get_hf_token() or None)
+        pipeline = getattr(info, "pipeline_tag", None)
+        suffix = f" ({pipeline})" if pipeline else ""
+        return {"ok": True, "message": f"Model '{model}' is available on Hugging Face{suffix}."}
+    except Exception as exc:
+        return {"ok": False, "message": f"Hugging Face model '{model}' is not available: {exc}"}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -218,6 +287,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"valid": False, "error": str(exc)})
             return
 
+        if self.path == "/validate-model":
+            from runtime_config import inference_config
+            with inference_config(_runtime_config(payload)):
+                self._send_json(200, validate_model(payload))
+            return
+
         if self.path != "/build-shacl-shape":
             self._send_json(404, {"error": "unknown endpoint"})
             return
@@ -229,7 +304,8 @@ class Handler(BaseHTTPRequestHandler):
         logger.set_verbosity(3)
         buf = io.StringIO()
         try:
-            with contextlib.redirect_stdout(buf):
+            from runtime_config import inference_config
+            with contextlib.redirect_stdout(buf), inference_config(_runtime_config(payload)):
                 result = build_shape(payload)
         except Exception as exc:
             self._send_json(200, {"shape": "", "valid": False, "error": str(exc),

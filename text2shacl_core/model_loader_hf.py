@@ -64,6 +64,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import Runnable
 
 from Logger import logger
+from runtime_config import get_hf_token
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ def _ensure_model(model_id: str) -> None:
     logger.info(f"Model '{model_id}' not found locally — downloading.")
     snapshot_download(
         repo_id=model_id,
-        token=os.environ.get("HF_TOKEN"),
+        token=get_hf_token() or None,
         ignore_patterns=[
             "*.msgpack", "*.h5",
             "flax_model*", "tf_model*",
@@ -186,7 +187,7 @@ def _load_standard_causal_lm(model_id: str) -> Dict[str, Any]:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     _ensure_model(model_id)
-    hf_token = os.environ.get("HF_TOKEN")
+    hf_token = get_hf_token() or None
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_id,
@@ -213,7 +214,7 @@ def _load_gpt_oss(model_id: str) -> Dict[str, Any]:
     from transformers import pipeline as hf_pipeline, AutoTokenizer
 
     _ensure_model(model_id)
-    hf_token = os.environ.get("HF_TOKEN")
+    hf_token = get_hf_token() or None
 
     logger.info(
         f"Loading gpt-oss model '{model_id}' — uses built-in MXFP4 quantization."
@@ -465,7 +466,7 @@ class _LocalEmbeddings:
             return
 
         _ensure_model(self.model_id)
-        hf_token = os.environ.get("HF_TOKEN")
+        hf_token = get_hf_token() or None
         device   = "cuda" if torch.cuda.is_available() else "cpu"
 
         if self._is_qwen3_emb:
@@ -616,7 +617,7 @@ class _LocalVisionModel:
             return
 
         _ensure_model(self.model_id)
-        hf_token = os.environ.get("HF_TOKEN")
+        hf_token = get_hf_token() or None
         dtype    = _torch_dtype()
 
         if self.model_id in _GEMMA3_IDS:

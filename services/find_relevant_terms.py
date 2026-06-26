@@ -33,7 +33,7 @@ HOST = "127.0.0.1"
 PORT = 9101
 TOP_K = 8
 
-# Cache key: (embedding model, ontology content hash, entity fingerprint).
+# Cache key: (embedding model, config fingerprint, ontology content hash, entity fingerprint).
 # It deliberately survives ontology changes/resets for the lifetime of this
 # service process, so reloading the exact same ontology can reuse its vectors.
 _EMBED_CACHE = {}
@@ -100,8 +100,28 @@ def _fingerprint(terms):
     return h.hexdigest()
 
 
-def _cache_key(terms, embedding_model_id, ontology_hash=""):
-    return embedding_model_id, ontology_hash or "no-content-hash", _fingerprint(terms)
+def _runtime_config(payload):
+    return payload.get("inference_config") or payload.get("model_config") or {}
+
+
+def _config_fingerprint(payload):
+    config = _runtime_config(payload)
+    if config:
+        try:
+            from runtime_config import config_fingerprint
+            return config_fingerprint(config)
+        except Exception:
+            pass
+    return payload.get("config_fingerprint") or "default-config"
+
+
+def _cache_key_for_payload(terms, embedding_model_id, ontology_hash, payload):
+    return (
+        embedding_model_id,
+        _config_fingerprint(payload),
+        ontology_hash or "no-content-hash",
+        _fingerprint(terms),
+    )
 
 
 def _cosine(a, b):
@@ -112,11 +132,12 @@ def _cosine(a, b):
 
 
 def _job_payload(key, job):
-    model_id, ontology_hash, ontology_fingerprint = key
+    model_id, config_fp, ontology_hash, ontology_fingerprint = key
     return {
         "status": job.get("status", "unknown"),
         "job_id": job.get("job_id"),
         "embedding_model": model_id,
+        "config_fingerprint": config_fp,
         "ontology_hash": ontology_hash,
         "ontology_fingerprint": ontology_fingerprint,
         "completed": job.get("completed", 0),
@@ -139,7 +160,10 @@ def _model_lock(embedding_model_id):
         return _MODEL_LOCKS.setdefault(embedding_model_id, threading.Lock())
 
 
-def _prepare_worker(key, terms, embedding_model_id, job_id, cancel_event):
+def _prepare_worker(key, terms, embedding_model_id, job_id, cancel_event, inference_config_payload):
+    from runtime_config import reset_inference_config, set_inference_config
+
+    ctx_token = set_inference_config(inference_config_payload)
     try:
         from model_loader import get_embedding_function  # imported lazily (heavy deps)
         embedder = get_embedding_function(embedding_model_id)
@@ -200,6 +224,8 @@ def _prepare_worker(key, terms, embedding_model_id, job_id, cancel_event):
         else:
             _update_job(key, job_id, status="error",
                         message=f"Could not prepare ontology embeddings: {exc}")
+    finally:
+        reset_inference_config(ctx_token)
 
 
 def prepare_embeddings(payload):
@@ -210,15 +236,16 @@ def prepare_embeddings(payload):
         return {"status": "none", "completed": 0, "total": 0,
                 "message": "No ontology terms supplied."}
 
-    key = _cache_key(terms, embedding_model_id, ontology_hash)
+    key = _cache_key_for_payload(terms, embedding_model_id, ontology_hash, payload)
     with _CACHE_LOCK:
         cached = _EMBED_CACHE.get(key)
         if cached is not None:
             return {
                 "status": "ready",
                 "embedding_model": embedding_model_id,
+                "config_fingerprint": key[1],
                 "ontology_hash": ontology_hash,
-                "ontology_fingerprint": key[2],
+                "ontology_fingerprint": key[3],
                 "completed": len(cached["ids"]),
                 "total": len(cached["ids"]),
                 "message": f"{len(cached['ids'])} ontology term embeddings reused from memory.",
@@ -242,7 +269,7 @@ def prepare_embeddings(payload):
 
     thread = threading.Thread(
         target=_prepare_worker,
-        args=(key, list(terms), embedding_model_id, job_id, cancel_event),
+        args=(key, list(terms), embedding_model_id, job_id, cancel_event, _runtime_config(payload)),
         daemon=True,
         name=f"ontology-embeddings-{job_id[:8]}",
     )
@@ -255,10 +282,11 @@ def embedding_status(payload):
     embedding_model_id = payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b"
     ontology_hash = payload.get("ontology_hash", "")
     ontology_fingerprint = payload.get("ontology_fingerprint", "")
+    config_fp = _config_fingerprint(payload)
     if terms:
-        key = _cache_key(terms, embedding_model_id, ontology_hash)
+        key = _cache_key_for_payload(terms, embedding_model_id, ontology_hash, payload)
     elif ontology_fingerprint:
-        key = (embedding_model_id, ontology_hash or "no-content-hash", ontology_fingerprint)
+        key = (embedding_model_id, config_fp, ontology_hash or "no-content-hash", ontology_fingerprint)
     else:
         return {"status": "none", "completed": 0, "total": 0}
     with _CACHE_LOCK:
@@ -267,8 +295,9 @@ def embedding_status(payload):
             return {
                 "status": "ready",
                 "embedding_model": embedding_model_id,
+                "config_fingerprint": key[1],
                 "ontology_hash": ontology_hash,
-                "ontology_fingerprint": key[2],
+                "ontology_fingerprint": key[3],
                 "completed": len(cached["ids"]),
                 "total": len(cached["ids"]),
                 "message": f"{len(cached['ids'])} ontology term embeddings ready.",
@@ -279,8 +308,9 @@ def embedding_status(payload):
     return {
         "status": "missing",
         "embedding_model": embedding_model_id,
+        "config_fingerprint": key[1],
         "ontology_hash": ontology_hash,
-        "ontology_fingerprint": key[2],
+        "ontology_fingerprint": key[3],
         "completed": 0,
         "total": len(terms) if terms else 0,
         "message": "Ontology embeddings have not been prepared.",
@@ -290,11 +320,14 @@ def embedding_status(payload):
 def cancel_embeddings(payload):
     ontology_hash = payload.get("ontology_hash", "")
     embedding_model_id = payload.get("embedding_model")
+    config_fp = _config_fingerprint(payload)
     cancelled = 0
     with _CACHE_LOCK:
         for key, job in list(_PREPARE_JOBS.items()):
-            model_id, key_hash, _ = key
+            model_id, key_config_fp, key_hash, _ = key
             if ontology_hash and key_hash != ontology_hash:
+                continue
+            if config_fp and key_config_fp != config_fp:
                 continue
             if embedding_model_id and model_id != embedding_model_id:
                 continue
@@ -312,8 +345,9 @@ def cancel_embeddings(payload):
 
 
 def rank_semantic(rule, terms, embedding_model_id, ontology_hash="",
-                  allowed_types=None, top_k=TOP_K):
-    key = _cache_key(terms, embedding_model_id, ontology_hash)
+                  allowed_types=None, top_k=TOP_K, payload=None):
+    payload = payload or {}
+    key = _cache_key_for_payload(terms, embedding_model_id, ontology_hash, payload)
     with _CACHE_LOCK:
         cached = _EMBED_CACHE.get(key)
         job = _PREPARE_JOBS.get(key)
@@ -323,6 +357,8 @@ def rank_semantic(rule, terms, embedding_model_id, ontology_hash="",
                 "ontology_terms": terms,
                 "embedding_model": embedding_model_id,
                 "ontology_hash": ontology_hash,
+                "inference_config": _runtime_config(payload),
+                "config_fingerprint": _config_fingerprint(payload),
             })
         raise EmbeddingsPreparing("ontology embeddings are still being prepared")
 
@@ -357,9 +393,6 @@ def rank_terms(payload):
     if not rule or not terms:
         return {"candidates": [], "method": "none", "message": "Provide a rule and an ontology."}
 
-    # Credentials (DATABRICKS_TOKEN/DATABRICKS_BASE_URL or HF_TOKEN) are read from
-    # the environment (.env), loaded by run_demo.py. The model_loader routes to the
-    # right backend by id format.
     embedding_model_id = payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b"
     ontology_hash = payload.get("ontology_hash", "")
     allowed_types = set(payload.get("entity_types") or [])
@@ -370,7 +403,7 @@ def rank_terms(payload):
     try:
         candidates = rank_semantic(
             rule, terms, embedding_model_id, ontology_hash,
-            allowed_types=allowed_types, top_k=top_k,
+            allowed_types=allowed_types, top_k=top_k, payload=payload,
         )
         return {"candidates": candidates, "method": "semantic",
                 "message": f"Semantic ranking via '{embedding_model_id}'."}
@@ -420,14 +453,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(length) or b"{}")
-        if self.path == "/prepare-ontology-embeddings":
-            result = prepare_embeddings(payload)
-        elif self.path == "/ontology-embedding-status":
-            result = embedding_status(payload)
-        elif self.path == "/cancel-ontology-embeddings":
-            result = cancel_embeddings(payload)
-        else:
-            result = rank_terms(payload)
+        from runtime_config import inference_config
+        with inference_config(_runtime_config(payload)):
+            if self.path == "/prepare-ontology-embeddings":
+                result = prepare_embeddings(payload)
+            elif self.path == "/ontology-embedding-status":
+                result = embedding_status(payload)
+            elif self.path == "/cancel-ontology-embeddings":
+                result = cancel_embeddings(payload)
+            else:
+                result = rank_terms(payload)
         self._send_json(200, {"provider": payload.get("provider"),
                               "model": payload.get("model"), **result})
 

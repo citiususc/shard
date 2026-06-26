@@ -4,13 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — Rule → Shape</title>
-    <link rel="stylesheet" href="styles.css?v=7">
+    <link rel="stylesheet" href="styles.css?v=19">
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">CITIUS · text2shacl</p>
-        <h1>Rule → Shape</h1>
+        <a class="brand-logo-link" href="index.html" aria-label="CITIUS home">
+          <img class="brand-logo" src="positivo_vertical_logo_tagline_citius.png" alt="CITIUS">
+        </a>
+        <div class="brand-copy">
+          <p class="eyebrow">CITIUS · text2shacl</p>
+          <h1>Rule → Shape</h1>
+        </div>
       </div>
       <nav class="topnav">
         <a class="navlink" href="index.html">Home</a>
@@ -46,11 +51,29 @@
             <button class="switch-button active" data-provider="databricks">Databricks</button>
             <button class="switch-button" data-provider="huggingface">HuggingFace</button>
           </div>
-          <p class="microcopy">Credentials are read from <code>.env</code> (DATABRICKS_TOKEN / DATABRICKS_BASE_URL, or HF_TOKEN).</p>
+          <div class="provider-config" data-provider-config="databricks">
+            <label class="field-label" for="databricks-base-url">Databricks base URL</label>
+            <input id="databricks-base-url" class="input" type="url" placeholder="https://<workspace>/mlflow/v1">
+            <label class="field-label" for="databricks-token">Databricks token</label>
+            <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
+          </div>
+          <div class="provider-config" data-provider-config="huggingface" hidden>
+            <label class="field-label" for="hf-token">Hugging Face token</label>
+            <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+          </div>
+          <label class="field-label" for="temperature">Temperature</label>
+          <input id="temperature" class="input" type="number" min="0" max="2" step="0.05">
           <label class="field-label" for="llm-model">Generation LLM (chat)</label>
           <select id="llm-model" class="input"></select>
           <label class="field-label" for="embedding-model">Embedding model (term ranking)</label>
           <select id="embedding-model" class="input"></select>
+          <label class="field-label" for="custom-model-id">Add custom model</label>
+          <div class="custom-model-row">
+            <select id="custom-model-role" class="input" aria-label="Custom model role"></select>
+            <input id="custom-model-id" class="input" type="text" placeholder="endpoint or org/model">
+            <button id="add-custom-model" class="secondary-button" type="button">Add</button>
+          </div>
+          <p id="model-config-status" class="microcopy">Configure credentials and models here.</p>
         </section>
       </aside>
 
@@ -155,7 +178,7 @@
       <pre class="logs-content" id="logs-content">No logs yet. Generate a shape to see the pipeline output here.</pre>
     </section>
 
-    <script src="common.js?v=7"></script>
-    <script src="rule.js?v=7"></script>
+    <script src="common.js?v=9"></script>
+    <script src="rule.js?v=9"></script>
   </body>
 </html>

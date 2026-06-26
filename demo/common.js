@@ -13,14 +13,12 @@ const SERVICES = {
   cancelTerms:  "http://127.0.0.1:9101/cancel-ontology-embeddings",
   build:    "http://127.0.0.1:9102/build-shacl-shape",
   validate: "http://127.0.0.1:9102/validate-shape",
+  validateModel: "http://127.0.0.1:9102/validate-model",
   guide:    "http://127.0.0.1:9103/generate-from-guide",
 };
 
-/* Inference backends. The model_loader routes by id format (HF ids contain "/",
-   Databricks short names do not), so the provider toggle is also a UI filter for
-   which catalog to show. Roles: chat (text generation/summaries), vision
-   (multimodal, for image description in Mode B), embedding (RAG/ranking).
-   Credentials come from the .env (DATABRICKS_TOKEN/DATABRICKS_BASE_URL or HF_TOKEN). */
+/* Suggested inference backends. Users can add extra models from the UI; these
+   lists are only defaults so a fresh browser session starts with useful choices. */
 const MODEL_CATALOG = {
   databricks: {
     chat: [
@@ -54,7 +52,7 @@ const MODEL_CATALOG = {
 
 const STORE = {
   ontology: "t2s.ontology",   // {filename, content, baseNamespace, prefixes, entities}
-  models:   "t2s.models",     // {provider, llmModel, textModel, visionModel, embeddingModel}
+  models:   "t2s.models",     // provider + credentials + selected/default/custom models
   accepted: "t2s.accepted",   // [{id, property, shape}]
 };
 
@@ -132,6 +130,52 @@ function refreshHighlight(taId) {
 
 /* ---------- model config ---------- */
 const DEFAULT_PROVIDER = "databricks";
+const DEFAULT_TEMPERATURE = 0.5;
+
+const MODEL_ROLE_CATALOG = {
+  llmModel: "chat",
+  textModel: "chat",
+  visionModel: "vision",
+  embeddingModel: "embedding",
+};
+
+const MODEL_ROLE_SELECTS = [
+  { key: "llmModel", selectId: "llm-model", label: "Generation LLM", catalogRole: "chat" },
+  { key: "textModel", selectId: "text-model", label: "Text model", catalogRole: "chat" },
+  { key: "visionModel", selectId: "vision-model", label: "Vision model", catalogRole: "vision" },
+  { key: "embeddingModel", selectId: "embedding-model", label: "Embedding model", catalogRole: "embedding" },
+];
+
+function emptyCustomModels() {
+  return {
+    databricks: { chat: [], vision: [], embedding: [] },
+    huggingface: { chat: [], vision: [], embedding: [] },
+  };
+}
+
+function uniqueList(values) {
+  return Array.from(new Set((values || []).filter(Boolean).map(String)));
+}
+
+function normaliseCustomModels(value) {
+  const out = emptyCustomModels();
+  ["databricks", "huggingface"].forEach((provider) => {
+    ["chat", "vision", "embedding"].forEach((role) => {
+      out[provider][role] = uniqueList(
+        value && value[provider] && Array.isArray(value[provider][role])
+          ? value[provider][role]
+          : [],
+      );
+    });
+  });
+  return out;
+}
+
+function clampTemperature(value) {
+  const n = Number.parseFloat(value);
+  if (!Number.isFinite(n)) return DEFAULT_TEMPERATURE;
+  return Math.min(2, Math.max(0, n));
+}
 
 function defaultModels(provider) {
   const c = MODEL_CATALOG[provider];
@@ -141,28 +185,80 @@ function defaultModels(provider) {
     textModel: c.chat[0],
     visionModel: c.vision[0],
     embeddingModel: c.embedding[0],
+    temperature: DEFAULT_TEMPERATURE,
+    databricks: { token: "", baseUrl: "" },
+    huggingface: { token: "" },
+    customModels: emptyCustomModels(),
   };
+}
+
+function defaultModelSelection(provider) {
+  const c = MODEL_CATALOG[provider] || MODEL_CATALOG[DEFAULT_PROVIDER];
+  return {
+    llmModel: c.chat[0],
+    textModel: c.chat[0],
+    visionModel: c.vision[0],
+    embeddingModel: c.embedding[0],
+  };
+}
+
+function catalogOptions(provider, catalogRole, customModels, selected) {
+  const defaults = (MODEL_CATALOG[provider] && MODEL_CATALOG[provider][catalogRole]) || [];
+  const custom = customModels && customModels[provider] && customModels[provider][catalogRole]
+    ? customModels[provider][catalogRole]
+    : [];
+  const options = uniqueList([...defaults, ...custom]);
+  if (selected && !options.includes(selected)) options.push(selected);
+  return options;
 }
 
 function getModels() {
   const stored = loadJSON(STORE.models, null);
   const provider = stored && MODEL_CATALOG[stored.provider] ? stored.provider : DEFAULT_PROVIDER;
-  const c = MODEL_CATALOG[provider];
-  const pick = (val, list) => (list.includes(val) ? val : list[0]);
+  const customModels = normaliseCustomModels(stored && stored.customModels);
+  const pick = (key) => {
+    const catalogRole = MODEL_ROLE_CATALOG[key];
+    const defaults = catalogOptions(provider, catalogRole, customModels, stored && stored[key]);
+    return defaults.includes(stored && stored[key]) ? stored[key] : defaults[0];
+  };
   return {
     provider,
-    llmModel:       pick(stored && stored.llmModel,       c.chat),
-    textModel:      pick(stored && stored.textModel,      c.chat),
-    visionModel:    pick(stored && stored.visionModel,    c.vision),
-    embeddingModel: pick(stored && stored.embeddingModel, c.embedding),
+    llmModel:       pick("llmModel"),
+    textModel:      pick("textModel"),
+    visionModel:    pick("visionModel"),
+    embeddingModel: pick("embeddingModel"),
+    temperature: clampTemperature(stored && stored.temperature),
+    databricks: {
+      token: (stored && stored.databricks && stored.databricks.token) || "",
+      baseUrl: (stored && stored.databricks && (stored.databricks.baseUrl || stored.databricks.base_url)) || "",
+    },
+    huggingface: {
+      token: (stored && stored.huggingface && stored.huggingface.token) || "",
+    },
+    customModels,
   };
 }
-function setModels(patch) { saveJSON(STORE.models, { ...getModels(), ...patch }); }
+
+function mergeModels(base, patch) {
+  return {
+    ...base,
+    ...patch,
+    databricks: { ...(base.databricks || {}), ...(patch.databricks || {}) },
+    huggingface: { ...(base.huggingface || {}), ...(patch.huggingface || {}) },
+    customModels: patch.customModels ? normaliseCustomModels(patch.customModels) : base.customModels,
+  };
+}
+
+function setModels(patch) { saveJSON(STORE.models, mergeModels(getModels(), patch)); }
 
 function fillSelect(select, options, selected) {
   if (!select) return;
+  options = options || [];
   select.innerHTML = "";
-  options.forEach((opt) => {
+  const finalOptions = uniqueList(selected && !options.includes(selected)
+    ? [...options, selected]
+    : options);
+  finalOptions.forEach((opt) => {
     const o = document.createElement("option");
     o.value = opt; o.textContent = opt;
     if (opt === selected) o.selected = true;
@@ -170,23 +266,102 @@ function fillSelect(select, options, selected) {
   });
 }
 
+function getInferenceConfig() {
+  const m = getModels();
+  return {
+    provider: m.provider,
+    temperature: m.temperature,
+    databricks: {
+      token: m.databricks.token || "",
+      base_url: m.databricks.baseUrl || "",
+    },
+    huggingface: {
+      token: m.huggingface.token || "",
+    },
+  };
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function modelConfigFingerprint(models = getModels()) {
+  const payload = {
+    provider: models.provider,
+    databricksBaseUrl: models.databricks.baseUrl || "",
+    databricksTokenHash: hashString(models.databricks.token || ""),
+    hfTokenHash: hashString(models.huggingface.token || ""),
+  };
+  return hashString(JSON.stringify(payload));
+}
+
+function setModelStatus(message, kind = "") {
+  const el = byId("model-config-status");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle("ok", kind === "ok");
+  el.classList.toggle("error", kind === "error");
+}
+
 /* Wire the provider toggle + model selects present in a page's rail. ids:
    provider buttons ([data-provider]), llm-model, text-model, vision-model,
-   embedding-model (text/vision/embedding optional per page). */
+   embedding-model (text/vision/embedding optional per page), optional
+   credential fields and custom-model controls. */
 function wireModelControls() {
-  function apply(provider, keepSelections) {
-    const c = MODEL_CATALOG[provider];
-    const sel = keepSelections ? getModels() : defaultModels(provider);
-    sel.provider = provider;
-    setModels(sel);
+  function availableRoleRows() {
+    return MODEL_ROLE_SELECTS.filter((row) => byId(row.selectId));
+  }
 
+  function fillCustomRoleSelect() {
+    const roleSelect = byId("custom-model-role");
+    if (!roleSelect) return;
+    const previous = roleSelect.value;
+    roleSelect.innerHTML = "";
+    availableRoleRows().forEach((row) => {
+      const opt = document.createElement("option");
+      opt.value = row.key;
+      opt.textContent = row.label;
+      roleSelect.appendChild(opt);
+    });
+    if (previous && Array.from(roleSelect.options).some((o) => o.value === previous)) {
+      roleSelect.value = previous;
+    }
+  }
+
+  function apply(provider, keepSelections) {
+    const current = getModels();
+    const sel = keepSelections
+      ? { ...current, provider }
+      : mergeModels(current, { provider, ...defaultModelSelection(provider) });
+    saveJSON(STORE.models, sel);
+
+    const fresh = getModels();
     document.querySelectorAll("[data-provider]").forEach((b) =>
       b.classList.toggle("active", b.dataset.provider === provider));
+    document.querySelectorAll("[data-provider-config]").forEach((el) => {
+      el.hidden = el.dataset.providerConfig !== provider;
+    });
 
-    fillSelect(byId("llm-model"), c.chat, sel.llmModel);
-    fillSelect(byId("text-model"), c.chat, sel.textModel);
-    fillSelect(byId("vision-model"), c.vision, sel.visionModel);
-    fillSelect(byId("embedding-model"), c.embedding, sel.embeddingModel);
+    MODEL_ROLE_SELECTS.forEach((row) => {
+      fillSelect(
+        byId(row.selectId),
+        catalogOptions(provider, row.catalogRole, fresh.customModels, fresh[row.key]),
+        fresh[row.key],
+      );
+    });
+
+    if (byId("databricks-token")) byId("databricks-token").value = fresh.databricks.token || "";
+    if (byId("databricks-base-url")) byId("databricks-base-url").value = fresh.databricks.baseUrl || "";
+    if (byId("hf-token")) byId("hf-token").value = fresh.huggingface.token || "";
+    if (byId("temperature")) byId("temperature").value = String(fresh.temperature);
+    fillCustomRoleSelect();
+    setModelStatus("Model settings are stored in this browser and sent with each request.");
   }
 
   const init = getModels();
@@ -196,7 +371,10 @@ function wireModelControls() {
     btn.addEventListener("click", () => {
       apply(btn.dataset.provider, false);
       document.dispatchEvent(new CustomEvent("embedding-model-changed", {
-        detail: { embeddingModel: getModels().embeddingModel },
+        detail: {
+          embeddingModel: getModels().embeddingModel,
+          configFingerprint: modelConfigFingerprint(),
+        },
       }));
     });
   });
@@ -212,9 +390,84 @@ function wireModelControls() {
   if (embeddingSelect) embeddingSelect.addEventListener("change", () => {
     setModels({ embeddingModel: embeddingSelect.value });
     document.dispatchEvent(new CustomEvent("embedding-model-changed", {
-      detail: { embeddingModel: embeddingSelect.value },
+      detail: {
+        embeddingModel: embeddingSelect.value,
+        configFingerprint: modelConfigFingerprint(),
+      },
     }));
   });
+
+  const bindConfig = (id, patcher, affectsEmbeddings = false) => {
+    const el = byId(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      setModels(patcher(el.value));
+      if (affectsEmbeddings) {
+        document.dispatchEvent(new CustomEvent("embedding-model-changed", {
+          detail: {
+            embeddingModel: getModels().embeddingModel,
+            configFingerprint: modelConfigFingerprint(),
+          },
+        }));
+      }
+    });
+  };
+  bindConfig("databricks-token", (value) => ({ databricks: { token: value } }), true);
+  bindConfig("databricks-base-url", (value) => ({ databricks: { baseUrl: value.trim() } }), true);
+  bindConfig("hf-token", (value) => ({ huggingface: { token: value } }), true);
+  bindConfig("temperature", (value) => ({ temperature: clampTemperature(value) }), false);
+
+  const addBtn = byId("add-custom-model");
+  if (addBtn) {
+    addBtn.addEventListener("click", async () => {
+      const roleSelect = byId("custom-model-role");
+      const modelInput = byId("custom-model-id");
+      const roleKey = roleSelect && roleSelect.value;
+      const modelId = modelInput && modelInput.value.trim();
+      const role = MODEL_ROLE_CATALOG[roleKey];
+      const models = getModels();
+      if (!role || !modelId) {
+        setModelStatus("Choose a model role and enter a model id.", "error");
+        return;
+      }
+      setModelStatus(`Checking '${modelId}'…`);
+      addBtn.disabled = true;
+      try {
+        const res = await fetch(SERVICES.validateModel, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: models.provider,
+            role,
+            model: modelId,
+            inference_config: getInferenceConfig(),
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.message || "Model validation failed.");
+
+        const customModels = normaliseCustomModels(models.customModels);
+        const list = customModels[models.provider][role];
+        if (!list.includes(modelId)) list.push(modelId);
+        setModels({ customModels, [roleKey]: modelId });
+        apply(models.provider, true);
+        if (modelInput) modelInput.value = "";
+        setModelStatus(data.message || `Added '${modelId}'.`, "ok");
+        if (roleKey === "embeddingModel") {
+          document.dispatchEvent(new CustomEvent("embedding-model-changed", {
+            detail: {
+              embeddingModel: modelId,
+              configFingerprint: modelConfigFingerprint(),
+            },
+          }));
+        }
+      } catch (err) {
+        setModelStatus(err.message || String(err), "error");
+      } finally {
+        addBtn.disabled = false;
+      }
+    });
+  }
 }
 
 /* ---------- ontology ---------- */
@@ -275,6 +528,8 @@ async function cancelOntologyEmbeddingPreparation(target = activeOntologyEmbeddi
       body: JSON.stringify({
         ontology_hash: target.ontologyHash,
         embedding_model: target.embeddingModel,
+        config_fingerprint: target.configFingerprint,
+        inference_config: target.inferenceConfig,
       }),
       keepalive: true,
     });
@@ -290,13 +545,16 @@ async function pollOntologyEmbeddingStatus(target) {
         ontology_hash: target.ontologyHash,
         ontology_fingerprint: target.ontologyFingerprint,
         embedding_model: target.embeddingModel,
+        config_fingerprint: target.configFingerprint,
+        inference_config: target.inferenceConfig,
       }),
     });
     const state = await res.json();
     if (activeOntologyEmbedding !== target) return;
     const current = getOntology();
     if (!current || current.contentHash !== target.ontologyHash
-        || getModels().embeddingModel !== target.embeddingModel) return;
+        || getModels().embeddingModel !== target.embeddingModel
+        || modelConfigFingerprint() !== target.configFingerprint) return;
     renderOntologyEmbeddingState(current, state);
     if (state.status === "preparing" || state.status === "cancelling") {
       ontologyEmbeddingPoll = setTimeout(
@@ -322,19 +580,26 @@ async function prepareOntologyEmbeddings(o) {
   }
 
   const embeddingModel = getModels().embeddingModel;
+  const inferenceConfig = getInferenceConfig();
+  const configFingerprint = modelConfigFingerprint();
   const target = {
     ontologyHash: o.contentHash,
     embeddingModel,
+    configFingerprint,
+    inferenceConfig,
     payload: {
       ontology_hash: o.contentHash,
       ontology_terms: o.entities,
       embedding_model: embeddingModel,
+      config_fingerprint: configFingerprint,
+      inference_config: inferenceConfig,
     },
   };
 
   if (activeOntologyEmbedding
       && (activeOntologyEmbedding.ontologyHash !== target.ontologyHash
-          || activeOntologyEmbedding.embeddingModel !== target.embeddingModel)) {
+          || activeOntologyEmbedding.embeddingModel !== target.embeddingModel
+          || activeOntologyEmbedding.configFingerprint !== target.configFingerprint)) {
     await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding);
   }
   activeOntologyEmbedding = target;
@@ -399,6 +664,8 @@ async function wireOntologyControls(onLoaded) {
           await cancelOntologyEmbeddingPreparation({
             ontologyHash: previous.contentHash,
             embeddingModel: getModels().embeddingModel,
+            configFingerprint: modelConfigFingerprint(),
+            inferenceConfig: getInferenceConfig(),
           });
         }
         setOntology({
@@ -531,6 +798,8 @@ function wireReset(buttonId) {
       await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding || {
         ontologyHash: o.contentHash,
         embeddingModel: getModels().embeddingModel,
+        configFingerprint: modelConfigFingerprint(),
+        inferenceConfig: getInferenceConfig(),
       });
     }
     localStorage.removeItem(STORE.ontology);

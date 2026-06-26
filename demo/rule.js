@@ -145,6 +145,8 @@ async function findRelevantTerms() {
         ontology_hash: o.contentHash || "",
         entity_types: entityFilter === "all" ? [] : [entityFilter],
         embedding_model: m.embeddingModel,
+        config_fingerprint: modelConfigFingerprint(m),
+        inference_config: getInferenceConfig(),
         model: m.llmModel, provider: m.provider,
       }),
     });
@@ -192,7 +194,8 @@ async function generateShape() {
         ontology_content: o.content, base_namespace: o.baseNamespace,
         domain_context: byId("domain-context").value.trim(),
         generation_guidance: byId("generation-guidance").value.trim(),
-        model: m.llmModel, provider: m.provider, temperature: 0.5,
+        model: m.llmModel, provider: m.provider, temperature: m.temperature,
+        inference_config: getInferenceConfig(),
       }),
     });
     const data = await res.json();

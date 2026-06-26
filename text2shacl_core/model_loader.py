@@ -50,6 +50,7 @@ from model_loader_databricks import (
 )
 
 from Logger import logger
+from runtime_config import get_inference_config
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +69,16 @@ def _is_hf_model_id(model_id: str) -> bool:
         "gemma_3_12b"                          → False (Databricks)
     """
     return "/" in model_id
+
+
+def _use_hf_backend(model_id: str) -> bool:
+    """Respect the UI provider when supplied; otherwise infer from model id."""
+    provider = (get_inference_config().get("provider") or "").lower()
+    if provider == "huggingface":
+        return True
+    if provider == "databricks":
+        return False
+    return _is_hf_model_id(model_id)
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +107,7 @@ def get_text_model(
     Return a LangChain Runnable for text summarisation (used by rag.py).
     Routes to HuggingFace if model_id contains '/', Databricks otherwise.
     """
-    if _is_hf_model_id(text_model_id):
+    if _use_hf_backend(text_model_id):
         logger.debug(
             f"[model_loader] get_text_model: '{text_model_id}' → HuggingFace."
         )
@@ -118,7 +129,7 @@ def get_chat_llm(
     Return a LangChain Runnable for evaluator / generator (used by multiagent.py).
     Routes to HuggingFace if model_id contains '/', Databricks otherwise.
     """
-    if _is_hf_model_id(llm_model_id):
+    if _use_hf_backend(llm_model_id):
         logger.debug(
             f"[model_loader] get_chat_llm: '{llm_model_id}' (kind={kind}) → HuggingFace."
         )
@@ -143,7 +154,7 @@ def get_embedding_function(
     Default: HuggingFace (Qwen/Qwen3-Embedding-0.6B).
     Pass a Databricks short endpoint name (no '/') to use Databricks instead.
     """
-    if _is_hf_model_id(embedding_model_id):
+    if _use_hf_backend(embedding_model_id):
         logger.debug(
             f"[model_loader] get_embedding_function: '{embedding_model_id}' → HuggingFace."
         )
@@ -168,7 +179,7 @@ def get_vision_backend(
     Default: Databricks (gemma_3_12b).
     Pass a HuggingFace model ID (contains '/') to use HuggingFace instead.
     """
-    if _is_hf_model_id(vision_model_id):
+    if _use_hf_backend(vision_model_id):
         logger.debug(
             f"[model_loader] get_vision_backend: '{vision_model_id}' → HuggingFace."
         )

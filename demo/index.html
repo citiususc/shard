@@ -4,13 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — SHACL co-construction</title>
-    <link rel="stylesheet" href="styles.css?v=3">
+    <link rel="stylesheet" href="styles.css?v=19">
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">CITIUS · text2shacl</p>
-        <h1>SHACL co-construction</h1>
+        <a class="brand-logo-link" href="index.html" aria-label="CITIUS home">
+          <img class="brand-logo" src="positivo_vertical_logo_tagline_citius.png" alt="CITIUS">
+        </a>
+        <div class="brand-copy">
+          <p class="eyebrow">CITIUS · text2shacl</p>
+          <h1>SHACL co-construction</h1>
+        </div>
       </div>
       <nav class="topnav">
         <a class="navlink active" href="index.html">Home</a>
@@ -20,35 +25,75 @@
     </header>
 
     <main class="landing">
-      <p class="lead">
-        Generate SHACL validation shapes from an OWL ontology and its business rules.
-        Choose a workflow: turn a single hand-written rule into one shape, or translate a
-        whole application guide (HTML or PDF) into the full set of shapes, reviewing each
-        one as it is produced.
-      </p>
+      <section class="hero">
+        <div class="hero-main">
+          <div class="hero-copy">
+            <p class="hero-kicker">Ontology-aware validation, built with you in the loop</p>
+            <h2 class="hero-title">Turn business knowledge into reviewable SHACL shapes.</h2>
+            <p class="lead">
+              Generate SHACL validation shapes from an OWL ontology and its business rules.
+              Work one rule at a time, or translate a full application guide into a queue of
+              shapes you can inspect, edit, validate and export.
+            </p>
+            <div class="hero-stats" aria-label="Shared workflow capabilities">
+              <span>Shared ontology</span>
+              <span>Editable Turtle</span>
+              <span>Model-assisted review</span>
+            </div>
+          </div>
 
-      <div class="cards">
-        <a class="card" href="rule.html">
-          <p class="step">Workflow 1</p>
-          <h2>Rule → Shape</h2>
-          <p>Write a business rule, pick the ontology target, and generate a single SHACL
-             shape you can edit, validate and accept.</p>
-        </a>
-        <a class="card" href="guide.html">
-          <p class="step">Workflow 2</p>
-          <h2>Guide → Shapes</h2>
-          <p>Upload the full application guide (HTML or PDF). The multi-agent pipeline
-             generates every shape and streams them in for review one by one.</p>
-        </a>
-      </div>
+          <div class="hero-preview" aria-label="text2shacl workflow preview">
+            <div class="preview-window">
+              <div class="preview-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="preview-line strong">Business rule</div>
+              <div class="preview-line">Every Track must define exactly one nominal gauge.</div>
+              <div class="preview-flow">
+                <span>Ontology</span>
+                <span>Terms</span>
+                <span>SHACL</span>
+              </div>
+              <pre class="preview-code">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
 
-      <p class="microcopy" style="margin-top:28px">
-        Both workflows share the same ontology, model configuration, prefixes and accepted-shape
-        list. Set them once; they persist as you move between pages. Inference runs through the
-        text2shacl model loader (Databricks by default — no local GPU required).
-      </p>
+ex:TrackShape a sh:NodeShape ;
+  sh:targetClass ex:Track ;
+  sh:property [
+    sh:path ex:nominalGauge ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] .</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="cards workflow-cards">
+          <a class="card workflow-card" href="rule.html">
+            <span class="card-arrow" aria-hidden="true">→</span>
+            <p class="step">Workflow 1</p>
+            <h2>Rule → Shape</h2>
+            <p>Write a business rule, pick the ontology target, and generate a single SHACL
+               shape you can edit, validate and accept.</p>
+            <ul class="card-list">
+              <li>Semantic ontology-term ranking</li>
+              <li>Target-aware generation context</li>
+              <li>Fast review before accepting</li>
+            </ul>
+          </a>
+          <a class="card workflow-card" href="guide.html">
+            <span class="card-arrow" aria-hidden="true">→</span>
+            <p class="step">Workflow 2</p>
+            <h2>Guide → Shapes</h2>
+            <p>Upload the full application guide (HTML or PDF). The multi-agent pipeline
+               generates every shape and streams them in for review one by one.</p>
+            <ul class="card-list">
+              <li>Guide parsing and chunking</li>
+              <li>Shape queue with validation status</li>
+              <li>Export accepted Turtle shapes</li>
+            </ul>
+          </a>
+        </div>
+      </section>
     </main>
 
-    <script src="common.js?v=3"></script>
+    <script src="common.js?v=12"></script>
   </body>
 </html>

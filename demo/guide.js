@@ -59,7 +59,8 @@ async function generateAll() {
     guide_content: guideFile.content, guide_filename: guideFile.filename, guide_is_base64: guideFile.isBase64,
     html_version: byId("html-version").value,
     llm_model: m.llmModel, text_model: m.textModel, vision_model: m.visionModel,
-    embedding_model: m.embeddingModel, temperature: 0.5, provider: m.provider,
+    embedding_model: m.embeddingModel, temperature: m.temperature, provider: m.provider,
+    inference_config: getInferenceConfig(),
   };
 
   try {

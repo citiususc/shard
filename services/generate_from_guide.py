@@ -21,7 +21,7 @@ fetch()+ReadableStream (not EventSource, which is GET-only), parsing on "\n\n".
 Endpoint:  POST http://127.0.0.1:9103/generate-from-guide
   request : {ontology_content, guide_content, guide_filename, html_version,
              llm_model, text_model, vision_model, embedding_model, temperature,
-             provider, prefixes?, base_namespace?}
+             provider, inference_config?, prefixes?, base_namespace?}
 """
 
 import base64
@@ -36,6 +36,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 HOST = "127.0.0.1"
 PORT = 9103
+
+
+def _runtime_config(payload):
+    return payload.get("inference_config") or payload.get("model_config") or payload
 
 
 def _materialize_guide(guide_content, guide_filename, is_base64):
@@ -119,7 +123,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         try:
-            self._run(payload)
+            from runtime_config import inference_config
+            with inference_config(_runtime_config(payload)):
+                self._run(payload)
         except Exception as exc:
             self._sse({"type": "error", "message": str(exc),
                        "trace": traceback.format_exc()[-1500:]})
@@ -130,7 +136,6 @@ class Handler(BaseHTTPRequestHandler):
         from rag_inmemory import build_inmemory_retriever
         from multiagent_stream import stream_shacl_generation
 
-        # Credentials are read from the environment (.env), loaded by run_demo.py.
         ontology_content = payload.get("ontology_content", "")
         if not ontology_content:
             self._sse({"type": "error", "message": "Missing ontology_content."})

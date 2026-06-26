@@ -7,15 +7,12 @@
   generate-from-guide   :9103   (SSE)
   web app (static)      :8768   → demo/
 
-Databricks credentials are read from the environment (a .env file in this folder
-is loaded automatically if python-dotenv is installed). The API key can also be
-pasted in the UI, which overrides DATABRICKS_TOKEN per request.
+Inference credentials, model ids and temperature are configured from the UI.
 """
 
 from pathlib import Path
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import os
 import shutil
 import signal
 import subprocess
@@ -28,40 +25,27 @@ PYTHON = shutil.which("python3") or sys.executable
 WEB_HOST = "127.0.0.1"
 WEB_PORT = 8768
 
-
-def load_env_file(path: Path):
-    """Load KEY=VALUE pairs from a .env into os.environ.
-
-    Uses python-dotenv if available, otherwise a minimal built-in parser, so the
-    demo works even without the package installed. Existing environment variables
-    are not overridden.
-    """
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(path)
-        return
-    except Exception:
-        pass
-    if not path.exists():
-        return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
-
-
-load_env_file(ROOT / ".env")
-
 PROCESSES = [
     ("parse-ontology",      [PYTHON, "services/parse_ontology.py"]),
     ("find-relevant-terms", [PYTHON, "services/find_relevant_terms.py"]),
     ("build-shacl-shape",   [PYTHON, "services/build_shacl_shapes.py"]),
     ("generate-from-guide", [PYTHON, "services/generate_from_guide.py"]),
 ]
+
+
+class NoCacheHTTPRequestHandler(SimpleHTTPRequestHandler):
+    """Static-file handler for development: always ask browsers to revalidate.
+
+    The demo UI changes often while iterating. Chrome can otherwise keep using
+    cached HTML/CSS/JS across restarts, which makes it look like run_demo.py is
+    serving an older version.
+    """
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
 
 
 def main():
@@ -85,25 +69,13 @@ def main():
     signal.signal(signal.SIGINT, stop_all)
     signal.signal(signal.SIGTERM, stop_all)
 
-    tok = os.environ.get("DATABRICKS_TOKEN")
-    url = os.environ.get("DATABRICKS_BASE_URL")
-    hf = os.environ.get("HF_TOKEN")
-    print("Credentials detected:")
-    print(f"  DATABRICKS_TOKEN    : {'set' if tok else 'MISSING'}")
-    print(f"  DATABRICKS_BASE_URL : {url if url else 'MISSING'}")
-    print(f"  HF_TOKEN            : {'set' if hf else 'not set (only needed for HuggingFace backend)'}")
-    if not tok or not url:
-        print("  ! Databricks generation will fail until both are set in "
-              f"{ROOT / '.env'} (or exported in this shell).")
-
-    env = os.environ.copy()
     for name, command in PROCESSES:
-        child = subprocess.Popen(command, cwd=ROOT, start_new_session=True, env=env)
+        child = subprocess.Popen(command, cwd=ROOT, start_new_session=True)
         children.append(child)
         print(f"started {name}: {' '.join(command)}")
         time.sleep(0.2)
 
-    web_handler = partial(SimpleHTTPRequestHandler, directory=str(ROOT / "demo"))
+    web_handler = partial(NoCacheHTTPRequestHandler, directory=str(ROOT / "demo"))
     web_server = ThreadingHTTPServer((WEB_HOST, WEB_PORT), web_handler)
     threading.Thread(target=web_server.serve_forever, daemon=True).start()
 
