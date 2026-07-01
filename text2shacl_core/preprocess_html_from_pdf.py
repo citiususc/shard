@@ -133,12 +133,15 @@ def _preprocess_html(file_path: str) -> str:
             empty_p += 1
     logger.debug(f"Removed {empty_p} empty <p> tag(s).")
 
-    cleaned_path = os.path.join(
-        tempfile.gettempdir(),
-        f"rinf_cleaned_{os.getpid()}.html",
-    )
-    with open(cleaned_path, "w", encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".html",
+        prefix="br2shacl_cleaned_",
+        delete=False,
+    ) as f:
         f.write(str(soup))
+        cleaned_path = f.name
 
     logger.info(f"Cleaned HTML written to temp file: {cleaned_path}")
     return cleaned_path

@@ -5,7 +5,8 @@ from an OWL ontology and business rules, with a human in the loop.
 
 It wraps the real text2shacl pipeline (vendored under `text2shacl_core/`) behind
 four small local services and a two-page frontend. Inference runs through the
-text2shacl `model_loader`, defaulting to **Databricks** (no local GPU required).
+text2shacl `model_loader` and is configured from the **Models** panel in the UI
+(provider, credentials, model ids and temperature).
 
 ---
 
@@ -17,9 +18,10 @@ configuration, prefixes and accepted-shape list (persisted in the browser):
 1. **Rule → Shape** (`rule.html`) — write a single business rule, pick the
    ontology target (or rank related classes/properties directly inside Search
    ontology), and generate one SHACL shape to edit, validate and accept. Ontology
-   term embeddings are prepared in the background after upload and cached in
-   memory by ontology content hash plus embedding model for the service session.
-   Uses the real generator prompts and the rdflib parse-and-retry loop.
+   term embeddings are prepared in the background after upload, once model
+   settings are configured, and cached in memory by ontology content hash,
+   embedding model and inference configuration for the service session. Uses
+   the real generator prompts and the rdflib parse-and-retry loop.
 
 2. **Guide → Shapes** (`guide.html`) — upload the full application guide (HTML or
    PDF). The multi-agent pipeline generates a shape for every ontology property
@@ -49,7 +51,7 @@ br2shacl-ui/
 │   ├── build_shacl_shapes.py   # :9102  single-rule generation + /validate-shape
 │   └── generate_from_guide.py  # :9103  full-guide generation, streamed (SSE)
 └── text2shacl_core/            # vendored text2shacl (the real pipeline)
-    ├── model_loader*.py · utils.py · prompts.py · Logger.py
+    ├── model_loader*.py · runtime_config.py · utils.py · prompts.py · Logger.py
     ├── preprocess_html*.py · multiagent.py · rag.py
     ├── ns_utils.py             # NEW: generic namespace/prefix derivation
     ├── rag_inmemory.py         # NEW: in-memory RAG (no Redis) for Mode B
@@ -64,8 +66,11 @@ for three surgical edits so the demo runs self-contained without a GPU or Redis:
 
 * `utils.py` — removed the dead `from enrich_sparql_constraints import enrich`
   import (`enrich()` is defined locally).
-* `model_loader.py` — the HuggingFace constant import is now optional, so `torch`
-  is not required for the Databricks-only path.
+* `model_loader.py` — routes by the provider selected in the UI, with the old
+  HuggingFace-by-slash heuristic as fallback.
+* `model_loader_databricks.py` — accepts UI-supplied Databricks credentials and
+  normalizes older `databricks-*` aliases to the actual endpoint names sent to
+  the Databricks Serving API.
 * `multiagent.py` — `torch.cuda.empty_cache()` is guarded by
   `torch.cuda.is_available()`.
 
@@ -85,23 +90,19 @@ Mode B avoids Redis by using an in-memory docstore + ephemeral Chroma
 python3 -m pip install -r requirements.txt
 ```
 
-Create a `.env` next to `run_demo.py` (or export the variables):
+No `.env` file is required or read by `run_demo.py`. Configure inference from the
+**Models** panel in either workflow page:
 
-```bash
-# Databricks (default backend)
-DATABRICKS_TOKEN=dapi...
-DATABRICKS_BASE_URL=https://<your-workspace>.cloud.databricks.com/ai-gateway/mlflow/v1
-DATABRICKS_EMBED_THROTTLE_SECS=2
+1. Choose **Databricks** or **Hugging Face**.
+2. For Databricks, paste the AI Gateway / Serving base URL and token.
+3. For Hugging Face, paste a token only if the selected model is gated/private.
+4. Select model ids per role or add a custom model manually.
+5. Adjust temperature.
 
-# HuggingFace (only if you select the HuggingFace backend)
-HF_TOKEN=hf_...
-```
-
-Each page has an **Inference backend** toggle (Databricks / HuggingFace, default
-Databricks). The model dropdowns are populated from that backend's catalog,
-filtered by role (chat, multimodal/vision, embedding). Credentials are read from
-the `.env` — there is no API-key field in the UI. The `model_loader` routes to the
-right backend automatically by model-id format.
+The Databricks catalog uses the endpoint names that are sent to the Serving API
+(`qwen3_embedding_0_6b`, `gemma_3_12b`, etc.). Custom Databricks model ids should
+therefore match the endpoint name deployed in your workspace. The UI validates a
+custom model before adding it.
 
 > Selecting the **HuggingFace** backend runs inference locally and additionally
 > requires `torch` and `transformers` (and, realistically, a GPU for the large
@@ -132,16 +133,21 @@ Then open:
   drives which models appear in each dropdown, split by role: chat (generation and
   guide summaries), multimodal/vision (image description in the guide workflow) and
   embedding (term ranking and RAG indexing). Databricks endpoint names must match
-  those deployed in your workspace; if a query fails with a 400 "cannot query
-  foundation model endpoint", pick a model that is **Ready** in your Serving tab.
+  those deployed in your workspace; if validation fails, pick a model that is
+  **Ready** in your Serving tab.
 * **First call latency.** The first embedding/generation call is slow (model
   warm-up + Databricks rate throttling). Subsequent calls reuse cached objects;
-  the term-ranking service caches the entity embedding matrix per ontology.
+  the term-ranking service caches the entity embedding matrix per ontology and
+  inference configuration. If Databricks token/base URL are missing, semantic
+  ranking is not started and the UI shows that model settings must be configured.
 * **PDF guides.** PDFs are converted to text best-effort (`pdfminer.six`) and
   treated as the v1.6.1 (from-PDF) format; images are not extracted from PDFs.
 * **Export.** "Export accepted shapes" writes a single `.ttl` combining the
   editable prefix block, the aggregated `sh:NodeShape` block (guide workflow) and
   every accepted shape body.
+* **Session import/export.** "Export session" saves the loaded ontology, editable
+  prefixes, accepted shapes and non-sensitive model settings. It intentionally
+  excludes tokens and workspace URLs.
 * The browser-side validation "Check" button calls a real rdflib parse on
   `:9102/validate-shape` — it is not a heuristic.
 ```

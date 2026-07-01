@@ -20,9 +20,7 @@ Cache invalidation:
   (e.g. interrupted indexing), the cache is cleared and rebuilt from scratch.
 - Pass force_process=True to force a full rebuild regardless of cache state.
 
-Required environment variables:
-  DATABRICKS_TOKEN      dapi...
-  DATABRICKS_BASE_URL   https://<workspace>/ai-gateway/mlflow/v1
+Databricks/HuggingFace credentials are supplied by the demo UI per request.
 
 Optional environment variables:
   CHROMA_ROOT           Override Chroma index directory (default: cache/chroma_db)

@@ -22,7 +22,6 @@ Endpoint:  POST http://127.0.0.1:9102/build-shacl-shape
   response: {shape, valid, error, attempts, hints[], fallback, message}
 """
 
-import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,6 +30,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from rdflib import Graph
 from langchain_core.output_parsers import StrOutputParser
+from ontology_io import ontology_base_namespace, parse_ontology_graph
+from service_http import new_request_id, read_json, send_health, send_json, send_options
 
 HOST = "127.0.0.1"
 PORT = 9102
@@ -49,8 +50,7 @@ def _build_ontology_info(ontology_content, target):
         # No ontology content: fall back to the flattened note from the UI.
         return f"# {target.get('iri')}\n{target.get('ontologyNote', '')}\n"
 
-    g = Graph(bind_namespaces="none")
-    g.parse(data=ontology_content, format="turtle")
+    g = parse_ontology_graph(ontology_content, target.get("ontology_filename", "ontology.ttl"))
 
     prop = target.get("full_iri") or target.get("iri")
     info = ""
@@ -102,7 +102,6 @@ def build_shape(payload):
     from prompts import load_prompt_from_json
     from utils import clean_shacl_response
     from Logger import logger
-    import ns_utils
 
     target = payload.get("target") or {}
     rule = payload.get("business_rule", "")
@@ -111,13 +110,12 @@ def build_shape(payload):
     prefixes = payload.get("prefixes") or ""
     ontology_content = payload.get("ontology_content", "")
     temperature = float(payload.get("temperature", 0.5))
-    model_id = payload.get("model") or "databricks-gpt-oss-120b"
+    model_id = payload.get("model") or "gpt-oss-120b"
 
     base_ns = payload.get("base_namespace") or ""
     if not base_ns and ontology_content:
-        g = Graph(bind_namespaces="none")
-        g.parse(data=ontology_content, format="turtle")
-        base_ns = ns_utils.derive_base_namespace(g)
+        g = parse_ontology_graph(ontology_content, payload.get("ontology_filename", "ontology.ttl"))
+        base_ns = ontology_base_namespace(g)
 
     logger.info(f"[build] target={target.get('iri')} type={target.get('type')} model={model_id}")
     ontology_info = _build_ontology_info(ontology_content, target)
@@ -203,7 +201,9 @@ def validate_model(payload):
     if provider == "databricks":
         import httpx
         from runtime_config import get_databricks_base_url, get_databricks_token
+        from model_loader_databricks import normalize_model_id
 
+        model = normalize_model_id(model)
         token = get_databricks_token()
         base_url = get_databricks_base_url()
         if not token or not base_url:
@@ -259,22 +259,25 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send_json(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        send_json(self, status, payload, request_id=getattr(self, "request_id", None))
 
     def do_OPTIONS(self):
-        self._send_json(200, {"ok": True})
+        send_options(self)
+
+    def do_GET(self):
+        self.request_id = new_request_id(self.headers)
+        if self.path == "/health":
+            send_health(self, "build-shacl-shape", request_id=self.request_id)
+            return
+        self._send_json(404, {"error": "unknown endpoint"})
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        self.request_id = new_request_id(self.headers)
+        try:
+            payload = read_json(self)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
 
         # Real rdflib Turtle validation for the editor "Check" button.
         if self.path == "/validate-shape":
@@ -297,25 +300,25 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "unknown endpoint"})
             return
 
-        # Capture the original project's debug prints (Logger + model_loader)
-        # emitted during this generation, and return them to the UI Logs panel.
-        import contextlib, io
         from Logger import logger
         logger.set_verbosity(3)
-        buf = io.StringIO()
         try:
             from runtime_config import inference_config
-            with contextlib.redirect_stdout(buf), inference_config(_runtime_config(payload)):
+            with logger.request_context(self.request_id) as log_lines, inference_config(_runtime_config(payload)):
                 result = build_shape(payload)
         except Exception as exc:
-            self._send_json(200, {"shape": "", "valid": False, "error": str(exc),
-                                  "attempts": 0, "hints": [], "fallback": True,
-                                  "logs": buf.getvalue(),
-                                  "message": f"build-shacl-shape failed: {exc}"})
+            status = 400 if isinstance(exc, ValueError) else 500
+            error_type = "request" if status == 400 else "service"
+            self._send_json(status, {"shape": "", "valid": False, "error": str(exc),
+                                     "attempts": 0, "hints": [], "fallback": True,
+                                     "logs": "\n".join(log_lines) if "log_lines" in locals() else "",
+                                     "error_type": error_type,
+                                     "message": f"build-shacl-shape failed: {exc}"})
             return
-        self._send_json(200, {"provider": payload.get("provider"),
-                              "model": payload.get("model"),
-                              "logs": buf.getvalue(), **result})
+        status = 502 if result.get("error_type") == "backend" else 200
+        self._send_json(status, {"provider": payload.get("provider"),
+                                 "model": payload.get("model"),
+                                 "logs": "\n".join(log_lines), **result})
 
 
 if __name__ == "__main__":

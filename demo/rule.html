@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — Rule → Shape</title>
-    <link rel="stylesheet" href="styles.css?v=19">
+    <link rel="stylesheet" href="styles.css?v=22">
   </head>
   <body>
     <header class="topbar">
@@ -40,6 +40,13 @@
         </label>
         <input id="ontology-file" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt">
         <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
+
+        <div class="session-actions" aria-label="Session import and export">
+          <button id="export-session" class="secondary-button" type="button">Export session</button>
+          <button id="import-session" class="secondary-button" type="button">Import session</button>
+          <input id="session-file" class="file-input" type="file" accept=".json,application/json">
+        </div>
+        <p class="microcopy">Session export excludes tokens and workspace URLs.</p>
 
         <label class="field-label" for="base-namespace">Base namespace</label>
         <input id="base-namespace" class="input" type="text" placeholder="Derived from the ontology">
@@ -84,14 +91,14 @@
             <section class="section-block">
               <div class="section-title"><h2>Generation context</h2></div>
               <label class="field-label" for="domain-context">Domain context</label>
-              <textarea id="domain-context" class="textarea compact" placeholder="Background about the domain the ontology models (e.g. railway infrastructure registers, units, conventions)."></textarea>
+              <textarea id="domain-context" class="textarea compact" placeholder="Background about the domain the ontology models (e.g. records, units, naming conventions, lifecycle states)."></textarea>
               <label class="field-label" for="generation-guidance">SHACL generation guidance</label>
               <textarea id="generation-guidance" class="textarea compact" placeholder="Hints on how to generate the shapes (e.g. always add sh:message, prefer sh:pattern for codes, keep cardinalities strict)."></textarea>
             </section>
 
             <section class="section-block">
               <div class="section-title"><h2>Business rule</h2></div>
-              <textarea id="business-rule" class="textarea large" placeholder="e.g. Every Track must have exactly one nominal track gauge in millimetres."></textarea>
+              <textarea id="business-rule" class="textarea large" placeholder="e.g. Every asset must have exactly one identifier and one lifecycle status."></textarea>
             </section>
 
             <section class="section-block">
@@ -178,7 +185,7 @@
       <pre class="logs-content" id="logs-content">No logs yet. Generate a shape to see the pipeline output here.</pre>
     </section>
 
-    <script src="common.js?v=9"></script>
-    <script src="rule.js?v=9"></script>
+    <script src="common.js?v=16"></script>
+    <script src="rule.js?v=13"></script>
   </body>
 </html>

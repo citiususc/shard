@@ -16,16 +16,15 @@ Endpoint:  POST http://127.0.0.1:9100/parse-ontology
   response: {"entities": [...], "prefixes": str, "base_namespace": str}
 """
 
-import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
-from rdflib import Graph, Namespace, RDF, RDFS, OWL, URIRef, BNode, Literal
-import ns_utils
+from rdflib import Namespace, RDF, RDFS, OWL, URIRef, BNode, Literal
+from ontology_io import ontology_base_namespace, ontology_prefix_block, parse_ontology_graph
+from service_http import new_request_id, read_json, send_health, send_json, send_options
 
 HOST = "127.0.0.1"
 PORT = 9100
@@ -33,14 +32,6 @@ SKOS = Namespace("http://www.w3.org/2004/02/skos/core#")
 DC = Namespace("http://purl.org/dc/elements/1.1/")
 DCTERMS = Namespace("http://purl.org/dc/terms/")
 SCHEMA = Namespace("http://schema.org/")
-
-
-def guess_format(filename):
-    suffix = Path(filename or "").suffix.lower()
-    return {
-        ".ttl": "turtle", ".trig": "trig", ".nt": "nt", ".nq": "nquads",
-        ".rdf": "xml", ".owl": "xml", ".xml": "xml",
-    }.get(suffix, "turtle")
 
 
 def qname(graph, value):
@@ -115,13 +106,7 @@ def add_entity(entities, graph, subject, entity_type, kind):
 
 
 def parse_ontology(filename, content):
-    graph = Graph(bind_namespaces="none")
-    fmt = guess_format(filename)
-    try:
-        graph.parse(data=content, format=fmt)
-    except Exception:
-        fallback = "xml" if fmt != "xml" else "turtle"
-        graph.parse(data=content, format=fallback)
+    graph = parse_ontology_graph(content, filename)
 
     entities = []
     seen = set()
@@ -147,8 +132,8 @@ def parse_ontology(filename, content):
             seen.add(key)
             add_entity(entities, graph, subject, "property", kind)
 
-    base_ns = ns_utils.derive_base_namespace(graph)
-    prefixes = ns_utils.build_prefix_block(graph, base_ns)
+    base_ns = ontology_base_namespace(graph)
+    prefixes = ontology_prefix_block(graph, base_ns)
 
     entities.sort(key=lambda item: (item["type"], item["label"].lower()))
     return {"prefixes": prefixes, "entities": entities, "base_namespace": base_ns}
@@ -159,25 +144,28 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send_json(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        send_json(self, status, payload, request_id=getattr(self, "request_id", None))
 
     def do_OPTIONS(self):
-        self._send_json(200, {"ok": True})
+        send_options(self)
+
+    def do_GET(self):
+        self.request_id = new_request_id(self.headers)
+        if self.path == "/health":
+            send_health(self, "parse-ontology", request_id=self.request_id)
+            return
+        self._send_json(404, {"error": "unknown endpoint"})
 
     def do_POST(self):
+        self.request_id = new_request_id(self.headers)
         if self.path != "/parse-ontology":
             self._send_json(404, {"error": "unknown endpoint"})
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            payload = read_json(self)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc), "entities": [], "prefixes": "", "base_namespace": ""})
+            return
         try:
             result = parse_ontology(payload.get("filename", ""), payload.get("content", ""))
         except Exception as exc:

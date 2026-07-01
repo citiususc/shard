@@ -1,8 +1,16 @@
 # Logger.py
 from __future__ import annotations
 
-import sys
-from typing import TextIO
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator, List, Optional
+
+
+_REQUEST_ID: ContextVar[str] = ContextVar("text2shacl_request_id", default="")
+_REQUEST_LOG_BUFFER: ContextVar[Optional[List[str]]] = ContextVar(
+    "text2shacl_request_log_buffer",
+    default=None,
+)
 
 
 class Logger:
@@ -26,21 +34,44 @@ class Logger:
     def get_verbosity(self) -> int:
         return self.verbosity
 
+    @contextmanager
+    def request_context(self, request_id: str) -> Iterator[List[str]]:
+        """Attach a request id and per-request log buffer to the current context."""
+        buffer: List[str] = []
+        token_id = _REQUEST_ID.set(request_id)
+        token_buffer = _REQUEST_LOG_BUFFER.set(buffer)
+        try:
+            yield buffer
+        finally:
+            _REQUEST_LOG_BUFFER.reset(token_buffer)
+            _REQUEST_ID.reset(token_id)
+
+    def _emit(self, level: str, msg: str) -> None:
+        request_id = _REQUEST_ID.get()
+        prefix = f"[{level}]"
+        if request_id:
+            prefix += f" [req:{request_id}]"
+        line = f"{prefix} {msg}"
+        print(line)
+        buffer = _REQUEST_LOG_BUFFER.get()
+        if buffer is not None:
+            buffer.append(line)
+
     def error(self, msg: str) -> None:
         if self.verbosity >= 0:
-            print(f"[ERROR] {msg}")
+            self._emit("ERROR", msg)
 
     def warn(self, msg: str) -> None:
         if self.verbosity >= 1:
-            print(f"[WARN] {msg}")
+            self._emit("WARN", msg)
 
     def info(self, msg: str) -> None:
         if self.verbosity >= 2:
-            print(f"[INFO] {msg}")
+            self._emit("INFO", msg)
 
     def debug(self, msg: str) -> None:
         if self.verbosity >= 3:
-            print(f"[DEBUG] {msg}")
+            self._emit("DEBUG", msg)
 
 
 logger = Logger()

@@ -18,8 +18,6 @@ Embeddings      BAAI/bge-large-en-v1.5             qwen3_embedding_0_6b
 CONFIGURATION
 -------------
 The demo UI sends Databricks token and AI Gateway base URL per request.
-Environment variables with the old names are still accepted as an optional
-fallback when the loader is used outside the UI.
 
 USAGE
 -----
@@ -65,6 +63,30 @@ DEFAULT_TEXT_MODEL_ID = "qwen3-next80b-a3b-instruct"
 DEFAULT_VISION_MODEL_ID = "gemma_3_12b"
 DEFAULT_EMBEDDING_MODEL_ID = "qwen3_embedding_0_6b"
 DEFAULT_TEMPERATURE = 0.50
+
+# UI/catalog aliases kept for backward compatibility with earlier builds that
+# exposed Databricks Foundation Model style ids. The Serving API payload must
+# receive the actual endpoint name deployed in the workspace.
+DATABRICKS_MODEL_ALIASES = {
+    "databricks-gpt-oss-120b": "gpt-oss-120b",
+    "databricks-qwen3-next-80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
+    "databricks-qwen3-next80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
+    "databricks-meta-llama-3-3-70b-instruct": "meta-llama-3-3-70b-instruct",
+    "databricks-qwen35-122b-a10b": "qwen35-122b-a10b",
+    "databricks-gpt-oss-20b": "gpt-oss-20b",
+    "databricks-meta-llama-3-1-8b-instruct": "meta-llama-3-1-8b-instruct",
+    "databricks-gemma-3-12b": "gemma_3_12b",
+    "databricks-llama-4-maverick": "llama-4-maverick",
+    "databricks-qwen3-embedding-0-6b": "qwen3_embedding_0_6b",
+    "databricks-qwen3_embedding_0_6b": "qwen3_embedding_0_6b",
+    "databricks-bge-large-en": "bge_large_en",
+    "databricks-gte-large-en": "gte_large_en",
+}
+
+
+def normalize_model_id(model_id: str) -> str:
+    clean = str(model_id or "").strip()
+    return DATABRICKS_MODEL_ALIASES.get(clean, clean)
 
 # Token budgets
 TEXT_MAX_NEW_TOKENS = int(os.environ.get("RAG_TEXT_MAX_NEW_TOKENS", "800"))
@@ -253,7 +275,7 @@ class _DatabricksChatRunnable(Runnable):
                         f"Databricks API error 429 after {max_retries} retries: {response.text}"
                     )
                 wait = base_delay * (2 ** attempt) + random.uniform(0, 1)
-                print(
+                logger.warn(
                     f"[CHAT] Rate limit hit on model '{self.model_id}'. "
                     f"Retry {attempt + 1}/{max_retries} in {wait:.1f}s..."
                 )
@@ -311,6 +333,7 @@ def get_text_model(
     Return a LangChain Runnable backed by Databricks llama3_3_70b.
     Drop-in replacement for model_loader.get_text_model().
     """
+    text_model_id = normalize_model_id(text_model_id)
     key = (text_model_id, round(float(temperature), 4))
     if key not in _TEXT_MODEL_CACHE:
         logger.info(
@@ -341,6 +364,7 @@ def get_chat_llm(
     Return a LangChain Runnable for the evaluator or generator role.
     Drop-in replacement for model_loader.get_chat_llm().
     """
+    llm_model_id = normalize_model_id(llm_model_id)
     key = (
         llm_model_id,
         kind,
@@ -381,7 +405,7 @@ class _DatabricksEmbeddings:
 
     # Conservative defaults — tunable via environment variables
     _BATCH_SIZE = int(os.environ.get("DATABRICKS_EMBED_BATCH_SIZE", "8"))
-    _THROTTLE_SECS = float(os.environ.get("DATABRICKS_EMBED_THROTTLE_SECS", "30.0"))
+    _THROTTLE_SECS = float(os.environ.get("DATABRICKS_EMBED_THROTTLE_SECS", "1.0"))
     _MAX_RETRIES = int(os.environ.get("DATABRICKS_EMBED_MAX_RETRIES", "10"))
 
     def __init__(self, endpoint: str):
@@ -500,6 +524,7 @@ def get_embedding_function(
     Return a Chroma-compatible embeddings object backed by Databricks qwen3_embedding_0_6b.
     Drop-in replacement for model_loader.get_embedding_function().
     """
+    embedding_model_id = normalize_model_id(embedding_model_id)
     logger.info(f"Creating embeddings wrapper for endpoint '{embedding_model_id}'.")
     return _DatabricksEmbeddings(endpoint=embedding_model_id)
 
@@ -618,6 +643,7 @@ def get_vision_backend(
 
     Drop-in replacement for model_loader.get_vision_backend().
     """
+    vision_model_id = normalize_model_id(vision_model_id)
     if vision_model_id not in _VISION_CACHE:
         logger.info(f"Creating vision backend for endpoint '{vision_model_id}'.")
         _VISION_CACHE[vision_model_id] = _DatabricksVisionModel(endpoint=vision_model_id)

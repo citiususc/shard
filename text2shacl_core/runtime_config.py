@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import hashlib
 import json
-import os
 from typing import Any, Dict, Iterator, Mapping
 
 
@@ -90,19 +89,19 @@ def get_inference_config() -> Dict[str, Any]:
 def get_databricks_token() -> str:
     cfg = get_inference_config()
     databricks = _clean_mapping(cfg.get("databricks"))
-    return str(databricks.get("token") or os.environ.get("DATABRICKS_TOKEN", "")).strip()
+    return str(databricks.get("token") or "").strip()
 
 
 def get_databricks_base_url() -> str:
     cfg = get_inference_config()
     databricks = _clean_mapping(cfg.get("databricks"))
-    return str(databricks.get("base_url") or os.environ.get("DATABRICKS_BASE_URL", "")).rstrip("/")
+    return str(databricks.get("base_url") or "").rstrip("/")
 
 
 def get_hf_token() -> str:
     cfg = get_inference_config()
     huggingface = _clean_mapping(cfg.get("huggingface"))
-    return str(huggingface.get("token") or os.environ.get("HF_TOKEN", "")).strip()
+    return str(huggingface.get("token") or "").strip()
 
 
 def config_fingerprint(config: Any = None) -> str:
@@ -113,13 +112,13 @@ def config_fingerprint(config: Any = None) -> str:
         cfg = normalize_inference_config(config)
 
     db_token = get_databricks_token() if config is None else str(
-        _clean_mapping(cfg.get("databricks")).get("token") or os.environ.get("DATABRICKS_TOKEN", "")
+        _clean_mapping(cfg.get("databricks")).get("token") or ""
     ).strip()
     hf_token = get_hf_token() if config is None else str(
-        _clean_mapping(cfg.get("huggingface")).get("token") or os.environ.get("HF_TOKEN", "")
+        _clean_mapping(cfg.get("huggingface")).get("token") or ""
     ).strip()
     db_base_url = get_databricks_base_url() if config is None else str(
-        _clean_mapping(cfg.get("databricks")).get("base_url") or os.environ.get("DATABRICKS_BASE_URL", "")
+        _clean_mapping(cfg.get("databricks")).get("base_url") or ""
     ).rstrip("/")
 
     safe = {

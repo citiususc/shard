@@ -7,6 +7,7 @@ let nodeShapes = "";        // aggregated sh:NodeShape block from the "done" eve
 
 document.addEventListener("DOMContentLoaded", () => {
   wireReset("reset-demo");
+  wireSessionControls();
   wireModelControls();
   attachTurtleHighlighter("shape-editor", "shape-editor-hl");
   attachTurtleHighlighter("prefixes-editor", "prefixes-editor-hl");
@@ -48,10 +49,50 @@ async function generateAll() {
   if (!guideFile) { setStatus("Upload a guide first"); return; }
 
   const m = getModels();
+  const panel = byId("validation-panel");
+  byId("generate-guide").disabled = true;
+  const prefixCheck = prefixPreflight("", o.prefixes, ["sh", "shape", "era", "era-sh"]);
+  if (!prefixCheck.ok) {
+    if (panel) {
+      panel.className = "validation-panel prefix-error";
+      panel.textContent = `Prefix preflight failed before calling the model:\n${prefixCheck.message}`;
+    }
+    setProgress(null, null, prefixCheck.message);
+    setStatus("Missing prefix declaration");
+    byId("generate-guide").disabled = false;
+    return;
+  }
+
+  setStatus("Checking model configuration…");
+  if (panel) {
+    panel.className = "validation-panel backend";
+    panel.textContent = "Checking model configuration before guide generation…";
+  }
+  let modelCheck;
+  try {
+    modelCheck = await validateSelectedModels([
+      "llmModel", "textModel", "visionModel", "embeddingModel",
+    ]);
+  } catch (e) {
+    modelCheck = {
+      ok: false,
+      message: `Could not validate model configuration: ${e.message}`,
+    };
+  }
+  if (!modelCheck.ok) {
+    if (panel) {
+      panel.className = "validation-panel backend error";
+      panel.textContent = `Generation blocked by model/backend configuration:\n${modelCheck.message}`;
+    }
+    setProgress(null, null, modelCheck.message);
+    setStatus("Model configuration error");
+    byId("generate-guide").disabled = false;
+    return;
+  }
+
   queue = []; activeIndex = null; nodeShapes = "";
   renderQueue();
   setProgress(0, 0, "Starting…");
-  byId("generate-guide").disabled = true;
   setStatus("Preprocessing guide…");
 
   const payload = {
@@ -64,14 +105,17 @@ async function generateAll() {
   };
 
   try {
-    const res = await fetch(SERVICES.guide, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const res = await fetchStream(SERVICES.guide, {
+      method: "POST",
       body: JSON.stringify(payload),
-    });
-    if (!res.ok || !res.body) throw new Error(`service returned ${res.status}`);
+    }, { label: "Generate guide shapes", timeoutMs: 30000 });
     await consumeStream(res.body);
   } catch (e) {
     setProgress(0, 0, `Error: ${e.message}`);
+    if (panel) {
+      panel.className = "validation-panel backend error";
+      panel.textContent = `Guide generation backend/service error:\n${e.message}`;
+    }
     setStatus("Generation failed");
   } finally {
     byId("generate-guide").disabled = false;
@@ -125,6 +169,11 @@ function handleEvent(ev) {
     setStatus("Generation complete");
   } else if (ev.type === "error") {
     setProgress(null, null, `Error: ${ev.message}`);
+    const panel = byId("validation-panel");
+    if (panel) {
+      panel.className = "validation-panel backend error";
+      panel.textContent = `Guide generation backend/service error:\n${ev.message}`;
+    }
     setStatus("Error");
   }
 }
@@ -166,7 +215,7 @@ function selectQueueItem(i) {
   byId("editor-title").textContent = String(item.property).split(/[\/#]/).pop() || "Editable shape";
   const panel = byId("validation-panel");
   if (item.status === "valid") { panel.className = "validation-panel ok"; panel.textContent = "Valid SHACL. Edit if needed, then accept."; }
-  else if (item.status === "invalid") { panel.className = "validation-panel error"; panel.textContent = `Invalid after ${item.attempts} attempts. Fix it, then accept.\nParser error:\n${item.error || ""}`; }
+  else if (item.status === "invalid") { panel.className = "validation-panel shape-error"; panel.textContent = `Shape/Turtle error — backend completed, but this generated shape is invalid.\nInvalid after ${item.attempts} attempts. Fix it, then accept.\nParser error:\n${item.error || ""}`; }
   else { panel.className = "validation-panel"; panel.textContent = "The model reported no shape for this property."; }
   renderQueue();
 }
@@ -181,9 +230,14 @@ async function checkShape() {
   try {
     const data = await validateTurtle(shape, (o && o.prefixes) || "");
     if (data.valid) { panel.className = "validation-panel ok"; panel.textContent = "Valid Turtle / SHACL."; }
-    else { panel.className = "validation-panel error"; panel.textContent = `Parse error:\n${data.error}`; }
+    else {
+      panel.className = data.error_type === "prefix"
+        ? "validation-panel prefix-error"
+        : "validation-panel shape-error";
+      panel.textContent = `${data.error_type === "prefix" ? "Prefix preflight" : "Shape/Turtle parse"} error:\n${data.error}`;
+    }
   } catch (e) {
-    panel.className = "validation-panel error"; panel.textContent = `Validation service error: ${e.message}`;
+    panel.className = "validation-panel backend error"; panel.textContent = `Validation service/backend error:\n${e.message}`;
   }
 }
 
@@ -197,8 +251,10 @@ async function acceptCurrent() {
   const data = await validateTurtle(shape, (o && o.prefixes) || "");
   if (!data.valid) {
     const panel = byId("validation-panel");
-    panel.className = "validation-panel error";
-    panel.textContent = `Cannot accept invalid Turtle:\n${data.error}`;
+    panel.className = data.error_type === "prefix"
+      ? "validation-panel prefix-error"
+      : "validation-panel shape-error";
+    panel.textContent = `Cannot accept invalid Turtle/SHACL:\n${data.error}`;
     return;
   }
   item.shape = shape;

@@ -22,17 +22,17 @@ const SERVICES = {
 const MODEL_CATALOG = {
   databricks: {
     chat: [
-      "databricks-gpt-oss-120b",
-      "databricks-qwen3-next-80b-a3b-instruct",
-      "databricks-meta-llama-3-3-70b-instruct",
-      "databricks-qwen35-122b-a10b",
-      "databricks-gpt-oss-20b",
-      "databricks-meta-llama-3-1-8b-instruct",
-      "databricks-gemma-3-12b",
-      "databricks-llama-4-maverick",
+      "gpt-oss-120b",
+      "qwen3-next80b-a3b-instruct",
+      "meta-llama-3-3-70b-instruct",
+      "qwen35-122b-a10b",
+      "gpt-oss-20b",
+      "meta-llama-3-1-8b-instruct",
+      "gemma_3_12b",
+      "llama-4-maverick",
     ],
-    vision: ["databricks-gemma-3-12b", "databricks-llama-4-maverick"],
-    embedding: ["databricks-qwen3-embedding-0-6b", "databricks-bge-large-en", "databricks-gte-large-en"],
+    vision: ["gemma_3_12b", "llama-4-maverick"],
+    embedding: ["qwen3_embedding_0_6b", "bge_large_en", "gte_large_en"],
   },
   huggingface: {
     chat: [
@@ -71,6 +71,84 @@ function loadJSON(key, fallback) {
   catch { return fallback; }
 }
 function saveJSON(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
+
+function makeRequestId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return "req-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+async function responsePayload(res) {
+  const text = await res.text();
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch { return { message: text }; }
+}
+
+async function fetchJSON(url, options = {}, meta = {}) {
+  const timeoutMs = meta.timeoutMs || 30000;
+  const label = meta.label || "Request";
+  const requestId = meta.requestId || makeRequestId();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Request-ID": requestId,
+      ...(options.headers || {}),
+    };
+    const res = await fetch(url, { ...options, headers, signal: controller.signal });
+    const payload = await responsePayload(res);
+    if (!res.ok) {
+      const msg = payload.message || payload.error || `${label} failed with HTTP ${res.status}`;
+      const err = new Error(`${msg} (request ${payload.request_id || requestId})`);
+      err.status = res.status;
+      err.payload = payload;
+      err.requestId = payload.request_id || requestId;
+      throw err;
+    }
+    return payload;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s (request ${requestId})`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchStream(url, options = {}, meta = {}) {
+  const timeoutMs = meta.timeoutMs || 30000;
+  const label = meta.label || "Streaming request";
+  const requestId = meta.requestId || makeRequestId();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Request-ID": requestId,
+      ...(options.headers || {}),
+    };
+    const res = await fetch(url, { ...options, headers, signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok || !res.body) {
+      const payload = await responsePayload(res);
+      const msg = payload.message || payload.error || `${label} failed with HTTP ${res.status}`;
+      const err = new Error(`${msg} (request ${payload.request_id || requestId})`);
+      err.status = res.status;
+      err.payload = payload;
+      err.requestId = payload.request_id || requestId;
+      throw err;
+    }
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") {
+      throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s (request ${requestId})`);
+    }
+    throw err;
+  }
+}
 
 /* ---------- Turtle syntax highlighting (textarea overlay) ----------
    Textareas can't colour individual characters, so we render a coloured <pre>
@@ -132,6 +210,22 @@ function refreshHighlight(taId) {
 const DEFAULT_PROVIDER = "databricks";
 const DEFAULT_TEMPERATURE = 0.5;
 
+const DATABRICKS_MODEL_ALIASES = {
+  "databricks-gpt-oss-120b": "gpt-oss-120b",
+  "databricks-qwen3-next-80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
+  "databricks-qwen3-next80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
+  "databricks-meta-llama-3-3-70b-instruct": "meta-llama-3-3-70b-instruct",
+  "databricks-qwen35-122b-a10b": "qwen35-122b-a10b",
+  "databricks-gpt-oss-20b": "gpt-oss-20b",
+  "databricks-meta-llama-3-1-8b-instruct": "meta-llama-3-1-8b-instruct",
+  "databricks-gemma-3-12b": "gemma_3_12b",
+  "databricks-llama-4-maverick": "llama-4-maverick",
+  "databricks-qwen3-embedding-0-6b": "qwen3_embedding_0_6b",
+  "databricks-qwen3_embedding_0_6b": "qwen3_embedding_0_6b",
+  "databricks-bge-large-en": "bge_large_en",
+  "databricks-gte-large-en": "gte_large_en",
+};
+
 const MODEL_ROLE_CATALOG = {
   llmModel: "chat",
   textModel: "chat",
@@ -163,7 +257,7 @@ function normaliseCustomModels(value) {
     ["chat", "vision", "embedding"].forEach((role) => {
       out[provider][role] = uniqueList(
         value && value[provider] && Array.isArray(value[provider][role])
-          ? value[provider][role]
+          ? value[provider][role].map((model) => normalizeModelId(provider, model))
           : [],
       );
     });
@@ -175,6 +269,12 @@ function clampTemperature(value) {
   const n = Number.parseFloat(value);
   if (!Number.isFinite(n)) return DEFAULT_TEMPERATURE;
   return Math.min(2, Math.max(0, n));
+}
+
+function normalizeModelId(provider, modelId) {
+  const id = String(modelId || "").trim();
+  if (provider === "databricks") return DATABRICKS_MODEL_ALIASES[id] || id;
+  return id;
 }
 
 function defaultModels(provider) {
@@ -208,7 +308,8 @@ function catalogOptions(provider, catalogRole, customModels, selected) {
     ? customModels[provider][catalogRole]
     : [];
   const options = uniqueList([...defaults, ...custom]);
-  if (selected && !options.includes(selected)) options.push(selected);
+  const normalizedSelected = normalizeModelId(provider, selected);
+  if (normalizedSelected && !options.includes(normalizedSelected)) options.push(normalizedSelected);
   return options;
 }
 
@@ -218,8 +319,9 @@ function getModels() {
   const customModels = normaliseCustomModels(stored && stored.customModels);
   const pick = (key) => {
     const catalogRole = MODEL_ROLE_CATALOG[key];
-    const defaults = catalogOptions(provider, catalogRole, customModels, stored && stored[key]);
-    return defaults.includes(stored && stored[key]) ? stored[key] : defaults[0];
+    const storedValue = normalizeModelId(provider, stored && stored[key]);
+    const defaults = catalogOptions(provider, catalogRole, customModels, storedValue);
+    return defaults.includes(storedValue) ? storedValue : defaults[0];
   };
   return {
     provider,
@@ -279,6 +381,73 @@ function getInferenceConfig() {
       token: m.huggingface.token || "",
     },
   };
+}
+
+function semanticSettingsStatus(models = getModels()) {
+  if (!models.embeddingModel) {
+    return {
+      ready: false,
+      message: "Semantic ranking disabled until model settings are configured.",
+    };
+  }
+  if (models.provider === "databricks"
+      && (!models.databricks.token || !models.databricks.baseUrl)) {
+    return {
+      ready: false,
+      message: "Semantic ranking disabled until model settings are configured.",
+    };
+  }
+  return { ready: true, message: "" };
+}
+
+function generationSettingsStatus(models = getModels()) {
+  if (!models.llmModel) {
+    return {
+      ready: false,
+      message: "Generation disabled until a model is selected.",
+    };
+  }
+  if (models.provider === "databricks"
+      && (!models.databricks.token || !models.databricks.baseUrl)) {
+    return {
+      ready: false,
+      message: "Generation disabled until Databricks token and base URL are configured.",
+    };
+  }
+  return { ready: true, message: "" };
+}
+
+async function validateSelectedModels(roleKeys) {
+  const models = getModels();
+  const settings = generationSettingsStatus(models);
+  if (!settings.ready) {
+    return { ok: false, message: settings.message };
+  }
+
+  const uniqueRoleKeys = Array.from(new Set(roleKeys || []));
+  for (const roleKey of uniqueRoleKeys) {
+    const catalogRole = MODEL_ROLE_CATALOG[roleKey];
+    const modelId = models[roleKey];
+    if (!catalogRole || !modelId) continue;
+    const data = await fetchJSON(SERVICES.validateModel, {
+      method: "POST",
+      body: JSON.stringify({
+        provider: models.provider,
+        role: catalogRole,
+        model: modelId,
+        inference_config: getInferenceConfig(),
+      }),
+    }, { label: `Validate model '${modelId}'`, timeoutMs: 25000 });
+    if (!data.ok) {
+      return {
+        ok: false,
+        role: roleKey,
+        model: modelId,
+        message: data.message || `Model '${modelId}' is not available.`,
+      };
+    }
+  }
+  return { ok: true, message: "Model configuration validated." };
 }
 
 function hashString(value) {
@@ -423,9 +592,9 @@ function wireModelControls() {
       const roleSelect = byId("custom-model-role");
       const modelInput = byId("custom-model-id");
       const roleKey = roleSelect && roleSelect.value;
-      const modelId = modelInput && modelInput.value.trim();
       const role = MODEL_ROLE_CATALOG[roleKey];
       const models = getModels();
+      const modelId = normalizeModelId(models.provider, modelInput && modelInput.value);
       if (!role || !modelId) {
         setModelStatus("Choose a model role and enter a model id.", "error");
         return;
@@ -433,17 +602,15 @@ function wireModelControls() {
       setModelStatus(`Checking '${modelId}'…`);
       addBtn.disabled = true;
       try {
-        const res = await fetch(SERVICES.validateModel, {
+        const data = await fetchJSON(SERVICES.validateModel, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider: models.provider,
             role,
             model: modelId,
             inference_config: getInferenceConfig(),
           }),
-        });
-        const data = await res.json();
+        }, { label: `Validate model '${modelId}'`, timeoutMs: 25000 });
         if (!data.ok) throw new Error(data.message || "Model validation failed.");
 
         const customModels = normaliseCustomModels(models.customModels);
@@ -500,6 +667,8 @@ function ontologySummaryText(o, embeddingState) {
     suffix = " · semantic index ready";
   } else if (embeddingState && ["preparing", "cancelling"].includes(embeddingState.status)) {
     suffix = ` · indexing ${embeddingState.completed || 0}/${embeddingState.total || o.entities.length}`;
+  } else if (embeddingState && embeddingState.status === "disabled") {
+    suffix = " · semantic ranking disabled";
   } else if (embeddingState && embeddingState.status === "error") {
     suffix = " · semantic index unavailable";
   }
@@ -514,6 +683,98 @@ function renderOntologyEmbeddingState(o, state) {
   }));
 }
 
+function normalizeNamespace(ns) {
+  const value = String(ns || "").trim();
+  if (!value) return "";
+  if (value.endsWith("#") || value.endsWith("/")) return value;
+  return value + "/";
+}
+
+function shapesNamespace(baseNs) {
+  const ns = normalizeNamespace(baseNs);
+  if (!ns) return "";
+  if (ns.endsWith("#")) return ns.slice(0, -1) + "/shapes/";
+  return ns + "shapes/";
+}
+
+function setPrefixLine(prefixBlock, prefix, namespace) {
+  if (!namespace) return prefixBlock || "";
+  const name = prefix || "";
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(^|\\n)@prefix\\s+${escaped}:\\s*<[^>]*>\\s*\\.`, "m");
+  const line = `@prefix ${name}: <${namespace}> .`;
+  const current = prefixBlock || "";
+  if (pattern.test(current)) {
+    return current.replace(pattern, (match, lead) => `${lead}${line}`);
+  }
+  const trimmed = current.trimEnd();
+  return trimmed ? `${trimmed}\n${line}\n` : `${line}\n`;
+}
+
+function syncPrefixesWithBaseNamespace(prefixBlock, baseNs) {
+  const base = normalizeNamespace(baseNs);
+  const shapeNs = shapesNamespace(base);
+  if (!base || !shapeNs) return prefixBlock || "";
+  let next = prefixBlock || "";
+  ["", "onto", "era"].forEach((prefix) => {
+    next = setPrefixLine(next, prefix, base);
+  });
+  ["onto-sh", "shape", "era-sh"].forEach((prefix) => {
+    next = setPrefixLine(next, prefix, shapeNs);
+  });
+  return next;
+}
+
+function declaredPrefixes(prefixBlock) {
+  const prefixes = new Set();
+  const re = /(?:@prefix|PREFIX)\s+([^:\s]*):\s*<[^>]+>\s*\.?/gi;
+  let match;
+  while ((match = re.exec(prefixBlock || "")) !== null) {
+    prefixes.add(match[1] || "");
+  }
+  return prefixes;
+}
+
+function stripTurtleNoise(text) {
+  return String(text || "")
+    .replace(/<[^>\s]*>/g, " ")
+    .replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, " ")
+    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, " ")
+    .replace(/#[^\n]*/g, " ");
+}
+
+function findUndeclaredPrefixes(text, prefixBlock) {
+  const declared = declaredPrefixes(prefixBlock);
+  const ignored = new Set(["http", "https", "urn", "mailto"]);
+  const missing = new Set();
+  const source = stripTurtleNoise(text);
+  const re = /(^|[^\w.-])([A-Za-z][\w.-]*|):[A-Za-z_][\w.-]*/g;
+  let match;
+  while ((match = re.exec(source)) !== null) {
+    const prefix = match[2] || "";
+    if (ignored.has(prefix)) continue;
+    if (!declared.has(prefix)) missing.add(prefix || "(default)");
+  }
+  return Array.from(missing).sort();
+}
+
+function findMissingRequiredPrefixes(prefixBlock, required) {
+  const declared = declaredPrefixes(prefixBlock);
+  return (required || []).filter((prefix) => !declared.has(prefix));
+}
+
+function prefixPreflight(text, prefixBlock, required = []) {
+  const missingUsed = findUndeclaredPrefixes(text, prefixBlock);
+  const missingRequired = findMissingRequiredPrefixes(prefixBlock, required);
+  const all = Array.from(new Set([...missingUsed, ...missingRequired])).sort();
+  if (!all.length) return { ok: true, missing: [] };
+  return {
+    ok: false,
+    missing: all,
+    message: `Missing prefix declaration(s): ${all.join(", ")}. Add them in "Prefixes in scope" before continuing.`,
+  };
+}
+
 async function cancelOntologyEmbeddingPreparation(target = activeOntologyEmbedding) {
   if (!target) return;
   if (ontologyEmbeddingPoll) {
@@ -522,9 +783,8 @@ async function cancelOntologyEmbeddingPreparation(target = activeOntologyEmbeddi
   }
   if (activeOntologyEmbedding === target) activeOntologyEmbedding = null;
   try {
-    await fetch(SERVICES.cancelTerms, {
+    await fetchJSON(SERVICES.cancelTerms, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ontology_hash: target.ontologyHash,
         embedding_model: target.embeddingModel,
@@ -532,15 +792,15 @@ async function cancelOntologyEmbeddingPreparation(target = activeOntologyEmbeddi
         inference_config: target.inferenceConfig,
       }),
       keepalive: true,
-    });
+    }, { label: "Cancel ontology embedding preparation", timeoutMs: 5000 });
   } catch { /* The service may already be stopping or the job may be complete. */ }
 }
 
 async function pollOntologyEmbeddingStatus(target) {
   if (activeOntologyEmbedding !== target) return;
   try {
-    const res = await fetch(SERVICES.termStatus, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const state = await fetchJSON(SERVICES.termStatus, {
+      method: "POST",
       body: JSON.stringify({
         ontology_hash: target.ontologyHash,
         ontology_fingerprint: target.ontologyFingerprint,
@@ -548,8 +808,7 @@ async function pollOntologyEmbeddingStatus(target) {
         config_fingerprint: target.configFingerprint,
         inference_config: target.inferenceConfig,
       }),
-    });
-    const state = await res.json();
+    }, { label: "Ontology embedding status", timeoutMs: 10000 });
     if (activeOntologyEmbedding !== target) return;
     const current = getOntology();
     if (!current || current.contentHash !== target.ontologyHash
@@ -572,6 +831,19 @@ async function pollOntologyEmbeddingStatus(target) {
 
 async function prepareOntologyEmbeddings(o) {
   if (!o || !o.entities || !o.entities.length) return;
+  const semanticSettings = semanticSettingsStatus();
+  if (!semanticSettings.ready) {
+    if (activeOntologyEmbedding) {
+      await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding);
+    }
+    renderOntologyEmbeddingState(o, {
+      status: "disabled",
+      completed: 0,
+      total: o.entities.length,
+      message: semanticSettings.message,
+    });
+    return;
+  }
   if (!o.contentHash) {
     o.contentHash = await hashOntologyContent(o.content);
     const current = getOntology();
@@ -605,11 +877,10 @@ async function prepareOntologyEmbeddings(o) {
   activeOntologyEmbedding = target;
 
   try {
-    const res = await fetch(SERVICES.prepareTerms, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const state = await fetchJSON(SERVICES.prepareTerms, {
+      method: "POST",
       body: JSON.stringify(target.payload),
-    });
-    const state = await res.json();
+    }, { label: "Prepare ontology embeddings", timeoutMs: 15000 });
     if (activeOntologyEmbedding !== target) return;
     target.ontologyFingerprint = state.ontology_fingerprint;
     renderOntologyEmbeddingState(o, state);
@@ -652,11 +923,10 @@ async function wireOntologyControls(onLoaded) {
       const content = await file.text();
       setStatus("Parsing ontology…");
       try {
-        const res = await fetch(SERVICES.parse, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+        const data = await fetchJSON(SERVICES.parse, {
+          method: "POST",
           body: JSON.stringify({ filename: file.name, content }),
-        });
-        const data = await res.json();
+        }, { label: "Parse ontology", timeoutMs: 30000 });
         if (data.error) throw new Error(data.error);
         const previous = getOntology();
         const contentHash = await hashOntologyContent(content);
@@ -683,28 +953,48 @@ async function wireOntologyControls(onLoaded) {
     });
   }
 
-  if (nsInput) nsInput.addEventListener("input", () => {
-    const o = getOntology(); if (o) { o.baseNamespace = nsInput.value; setOntology(o); }
+  if (nsInput) nsInput.addEventListener("change", () => {
+    const o = getOntology();
+    if (!o) return;
+    o.baseNamespace = normalizeNamespace(nsInput.value);
+    o.prefixes = syncPrefixesWithBaseNamespace(o.prefixes || "", o.baseNamespace);
+    setOntology(o);
+    nsInput.value = o.baseNamespace;
+    if (prefixEditor) {
+      prefixEditor.value = o.prefixes;
+      refreshHighlight("prefixes-editor");
+    }
+    setStatus("Base namespace and prefixes synchronized");
   });
   if (prefixEditor) prefixEditor.addEventListener("input", () => {
     const o = getOntology(); if (o) { o.prefixes = prefixEditor.value; setOntology(o); }
   });
   if (resetPrefixes) resetPrefixes.addEventListener("click", async () => {
     const o = getOntology(); if (!o) return;
-    const res = await fetch(SERVICES.parse, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const data = await fetchJSON(SERVICES.parse, {
+      method: "POST",
       body: JSON.stringify({ filename: o.filename, content: o.content }),
-    });
-    const data = await res.json();
-    o.prefixes = data.prefixes || ""; setOntology(o);
+    }, { label: "Reset ontology prefixes", timeoutMs: 30000 });
+    o.prefixes = syncPrefixesWithBaseNamespace(data.prefixes || "", o.baseNamespace || data.base_namespace || "");
+    setOntology(o);
     if (prefixEditor) { prefixEditor.value = o.prefixes; refreshHighlight("prefixes-editor"); }
   });
 
   document.addEventListener("embedding-model-changed", async () => {
     const o = getOntology();
     if (!o) return;
+    const semanticSettings = semanticSettingsStatus();
     if (activeOntologyEmbedding) {
       await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding);
+    }
+    if (!semanticSettings.ready) {
+      renderOntologyEmbeddingState(o, {
+        status: "disabled",
+        completed: 0,
+        total: o.entities ? o.entities.length : 0,
+        message: semanticSettings.message,
+      });
+      return;
     }
     prepareOntologyEmbeddings(o);
   });
@@ -753,13 +1043,38 @@ function buildTurtleDocument(extraNodeShapes) {
   return doc;
 }
 
-function downloadText(filename, text) {
-  const blob = new Blob([text], { type: "text/turtle" });
+function downloadText(filename, text, type = "text/plain") {
+  const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+
+async function saveTextAsFile(defaultName, text, type = "text/plain", description = "Text file", extensions = []) {
+  if (window.showSaveFilePicker) {
+    try {
+      const options = { suggestedName: defaultName };
+      if (extensions.length) {
+        options.types = [{ description, accept: { [type]: extensions } }];
+      }
+      const handle = await window.showSaveFilePicker(options);
+      const writable = await handle.createWritable();
+      await writable.write(new Blob([text], { type }));
+      await writable.close();
+      return { saved: true, picked: true, name: handle.name || defaultName };
+    } catch (e) {
+      if (e && e.name === "AbortError") return { saved: false, cancelled: true };
+      throw e;
+    }
+  }
+
+  const chosen = prompt("Save session as", defaultName);
+  if (chosen === null) return { saved: false, cancelled: true };
+  const name = chosen.trim() || defaultName;
+  downloadText(name, text, type);
+  return { saved: true, picked: false, name };
 }
 
 function wireExport(buttonId, getNodeShapes) {
@@ -768,9 +1083,88 @@ function wireExport(buttonId, getNodeShapes) {
   btn.addEventListener("click", () => {
     if (getAccepted().length === 0) { setStatus("No accepted shapes to export"); return; }
     const node = getNodeShapes ? getNodeShapes() : "";
-    downloadText("generated_shapes.ttl", buildTurtleDocument(node));
+    downloadText("generated_shapes.ttl", buildTurtleDocument(node), "text/turtle");
     setStatus("Exported generated_shapes.ttl");
   });
+}
+
+/* ---------- session import / export ---------- */
+function sanitizedModelsForExport() {
+  const m = getModels();
+  return {
+    provider: m.provider,
+    llmModel: m.llmModel,
+    textModel: m.textModel,
+    visionModel: m.visionModel,
+    embeddingModel: m.embeddingModel,
+    temperature: m.temperature,
+    customModels: m.customModels,
+  };
+}
+
+function wireSessionControls() {
+  const exportBtn = byId("export-session");
+  const importBtn = byId("import-session");
+  const importInput = byId("session-file");
+
+  if (exportBtn) exportBtn.addEventListener("click", async () => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      ontology: getOntology(),
+      accepted: getAccepted(),
+      models: sanitizedModelsForExport(),
+    };
+    try {
+      const result = await saveTextAsFile(
+        "session.json",
+        JSON.stringify(payload, null, 2),
+        "application/json",
+        "JSON session",
+        [".json"]
+      );
+      if (result.cancelled) {
+        setStatus("Session export cancelled");
+      } else if (result.picked) {
+        setStatus(`Session saved as ${result.name} without credentials`);
+      } else {
+        setStatus(`Session downloaded as ${result.name} without credentials`);
+      }
+    } catch (e) {
+      setStatus(`Could not export session: ${e.message}`);
+    }
+  });
+
+  if (importBtn && importInput) {
+    importBtn.addEventListener("click", () => importInput.click());
+    importInput.addEventListener("change", async (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      try {
+        const payload = JSON.parse(await file.text());
+        if (payload.ontology) setOntology(payload.ontology);
+        if (Array.isArray(payload.accepted)) setAccepted(payload.accepted);
+        if (payload.models) {
+          const current = getModels();
+          saveJSON(STORE.models, mergeModels(current, {
+            provider: payload.models.provider || current.provider,
+            llmModel: payload.models.llmModel || current.llmModel,
+            textModel: payload.models.textModel || current.textModel,
+            visionModel: payload.models.visionModel || current.visionModel,
+            embeddingModel: payload.models.embeddingModel || current.embeddingModel,
+            temperature: clampTemperature(payload.models.temperature),
+            customModels: payload.models.customModels || current.customModels,
+          }));
+        }
+        setStatus("Session imported");
+        location.reload();
+      } catch (e) {
+        setStatus(`Could not import session: ${e.message}`);
+      } finally {
+        importInput.value = "";
+      }
+    });
+  }
 }
 
 /* ---------- copy / validate ---------- */
@@ -780,11 +1174,19 @@ async function copyToClipboard(text) {
 }
 
 async function validateTurtle(shape, prefixes) {
-  const res = await fetch(SERVICES.validate, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+  const preflight = prefixPreflight(shape, prefixes, ["sh"]);
+  if (!preflight.ok) {
+    return {
+      valid: false,
+      error: preflight.message,
+      error_type: "prefix",
+      missing_prefixes: preflight.missing,
+    };
+  }
+  return fetchJSON(SERVICES.validate, {
+    method: "POST",
     body: JSON.stringify({ shape, prefixes }),
-  });
-  return res.json(); // {valid, error}
+  }, { label: "Validate Turtle", timeoutMs: 15000 }); // {valid, error}
 }
 
 /* ---------- reset ---------- */

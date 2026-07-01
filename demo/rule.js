@@ -7,6 +7,7 @@ let semanticSearchActive = false;
 
 document.addEventListener("DOMContentLoaded", () => {
   wireReset("reset-demo");
+  wireSessionControls();
   wireModelControls();
   wireExport("export-shapes", () => "");
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
@@ -133,13 +134,20 @@ async function findRelevantTerms() {
   if (!rule) { setStatus("Write a business rule first"); return; }
 
   const m = getModels();
+  const semanticSettings = semanticSettingsStatus(m);
+  if (!semanticSettings.ready) {
+    clearSemanticResults(false);
+    byId("ontology-search-status").textContent = semanticSettings.message;
+    setStatus("Semantic ranking disabled");
+    return;
+  }
   const button = byId("analyze-rule");
   button.disabled = true;
   setStatus("Ranking ontology terms…");
   byId("ontology-search-status").textContent = "Ranking ontology terms…";
   try {
-    const res = await fetch(SERVICES.terms, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const data = await fetchJSON(SERVICES.terms, {
+      method: "POST",
       body: JSON.stringify({
         business_rule: rule, ontology_terms: o.entities,
         ontology_hash: o.contentHash || "",
@@ -149,8 +157,7 @@ async function findRelevantTerms() {
         inference_config: getInferenceConfig(),
         model: m.llmModel, provider: m.provider,
       }),
-    });
-    const data = await res.json();
+    }, { label: "Rank ontology terms", timeoutMs: 30000 });
     lastCandidates = data.candidates || [];
     semanticSearchActive = true;
     byId("clear-related-terms").hidden = false;
@@ -179,16 +186,41 @@ async function generateShape() {
   const rule = byId("business-rule").value.trim();
   const m = getModels();
 
-  setStatus("Generating SHACL shape…");
   byId("generate-shape").disabled = true;
   const panel = byId("validation-panel");
   panel.className = "validation-panel";
-  panel.textContent = "Generating… (this may take a while on the first call).";
 
   try {
+    const prefixCheck = prefixPreflight([
+      selectedEntity.iri,
+      selectedEntity.domain,
+      selectedEntity.range,
+      byId("ontology-note").value,
+    ].join("\n"), o.prefixes, ["sh", "shape", "era", "era-sh"]);
+    if (!prefixCheck.ok) {
+      panel.className = "validation-panel prefix-error";
+      panel.textContent = `Prefix preflight failed before calling the model:\n${prefixCheck.message}`;
+      setStatus("Missing prefix declaration");
+      return;
+    }
+
+    setStatus("Checking model configuration…");
+    panel.className = "validation-panel backend";
+    panel.textContent = "Checking model configuration before generation…";
+    const modelCheck = await validateSelectedModels(["llmModel"]);
+    if (!modelCheck.ok) {
+      panel.className = "validation-panel backend error";
+      panel.textContent = `Generation blocked by model/backend configuration:\n${modelCheck.message}`;
+      setStatus("Model configuration error");
+      return;
+    }
+
+    setStatus("Generating SHACL shape…");
+    panel.className = "validation-panel";
+    panel.textContent = "Generating… (this may take a while on the first call).";
     const target = { ...selectedEntity, ontologyNote: byId("ontology-note").value };
-    const res = await fetch(SERVICES.build, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+    const data = await fetchJSON(SERVICES.build, {
+      method: "POST",
       body: JSON.stringify({
         business_rule: rule, target, prefixes: o.prefixes,
         ontology_content: o.content, base_namespace: o.baseNamespace,
@@ -197,8 +229,7 @@ async function generateShape() {
         model: m.llmModel, provider: m.provider, temperature: m.temperature,
         inference_config: getInferenceConfig(),
       }),
-    });
-    const data = await res.json();
+    }, { label: "Generate SHACL shape", timeoutMs: 120000 });
     byId("shape-editor").value = data.shape || "";
     refreshHighlight("shape-editor");
     renderLogs(data.logs);
@@ -209,16 +240,19 @@ async function generateShape() {
       panel.className = "validation-panel ok";
       panel.textContent = data.message || "Valid SHACL generated.";
     } else if (data.error_type === "backend") {
-      panel.className = "validation-panel error";
-      panel.textContent = `Model/backend error (not a problem with your shape):\n${data.error || data.message}`;
+      panel.className = "validation-panel backend error";
+      panel.textContent = `Model/backend error — generation did not produce a shape:\n${data.error || data.message}`;
     } else {
-      panel.className = "validation-panel error";
-      panel.textContent = `Returned after ${data.attempts} attempts with a Turtle parse error:\n${data.error || data.message}`;
+      panel.className = "validation-panel shape-error";
+      panel.textContent = `Shape/Turtle error — the backend ran, but the generated shape is invalid:\nReturned after ${data.attempts} attempts.\n${data.error || data.message}`;
     }
-    setStatus(data.valid ? "Shape generated" : "Shape needs fixing");
+    if (data.valid) setStatus("Shape generated");
+    else if (data.error_type === "backend") setStatus("Backend/model error");
+    else setStatus("Shape needs fixing");
   } catch (e) {
-    panel.className = "validation-panel error";
-    panel.textContent = `Generation service error: ${e.message}`;
+    if (e.payload && e.payload.logs) renderLogs(e.payload.logs);
+    panel.className = "validation-panel backend error";
+    panel.textContent = `Generation service/backend error:\n${e.message}`;
     setStatus("Generation failed");
   } finally {
     byId("generate-shape").disabled = false;
@@ -236,10 +270,15 @@ async function checkShape() {
   try {
     const data = await validateTurtle(shape, (o && o.prefixes) || "");
     if (data.valid) { panel.className = "validation-panel ok"; panel.textContent = "Valid Turtle / SHACL."; }
-    else { panel.className = "validation-panel error"; panel.textContent = `Parse error:\n${data.error}`; }
+    else {
+      panel.className = data.error_type === "prefix"
+        ? "validation-panel prefix-error"
+        : "validation-panel shape-error";
+      panel.textContent = `${data.error_type === "prefix" ? "Prefix preflight" : "Shape/Turtle parse"} error:\n${data.error}`;
+    }
   } catch (e) {
-    panel.className = "validation-panel error";
-    panel.textContent = `Validation service error: ${e.message}`;
+    panel.className = "validation-panel backend error";
+    panel.textContent = `Validation service/backend error:\n${e.message}`;
   }
 }
 
@@ -250,8 +289,10 @@ async function acceptCurrent() {
   const data = await validateTurtle(shape, (o && o.prefixes) || "");
   if (!data.valid) {
     const panel = byId("validation-panel");
-    panel.className = "validation-panel error";
-    panel.textContent = `Cannot accept invalid Turtle:\n${data.error}`;
+    panel.className = data.error_type === "prefix"
+      ? "validation-panel prefix-error"
+      : "validation-panel shape-error";
+    panel.textContent = `Cannot accept invalid Turtle/SHACL:\n${data.error}`;
     return;
   }
   acceptShape(selectedEntity ? selectedEntity.iri : "(shape)", shape);

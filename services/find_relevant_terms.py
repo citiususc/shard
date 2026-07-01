@@ -18,7 +18,6 @@ Endpoint:  POST http://127.0.0.1:9101/find-relevant-terms
 """
 
 import hashlib
-import json
 import math
 import os
 import re
@@ -28,6 +27,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
+
+from service_http import new_request_id, read_json, send_health, send_json, send_options
 
 HOST = "127.0.0.1"
 PORT = 9101
@@ -122,6 +123,35 @@ def _cache_key_for_payload(terms, embedding_model_id, ontology_hash, payload):
         ontology_hash or "no-content-hash",
         _fingerprint(terms),
     )
+
+
+def _semantic_settings_error(payload, embedding_model_id):
+    config = _runtime_config(payload)
+    provider = str(config.get("provider") or payload.get("provider") or "").strip().lower()
+    uses_databricks = provider == "databricks" or (not provider and "/" not in str(embedding_model_id))
+    if not uses_databricks:
+        return None
+
+    try:
+        from runtime_config import get_databricks_base_url, get_databricks_token
+        if get_databricks_token() and get_databricks_base_url():
+            return None
+    except Exception:
+        pass
+    return "Semantic ranking disabled until model settings are configured."
+
+
+def _normalise_embedding_model_id(payload, embedding_model_id):
+    config = _runtime_config(payload)
+    provider = str(config.get("provider") or payload.get("provider") or "").strip().lower()
+    uses_databricks = provider == "databricks" or (not provider and "/" not in str(embedding_model_id))
+    if not uses_databricks:
+        return embedding_model_id
+    try:
+        from model_loader_databricks import normalize_model_id
+        return normalize_model_id(embedding_model_id)
+    except Exception:
+        return embedding_model_id
 
 
 def _cosine(a, b):
@@ -230,11 +260,17 @@ def _prepare_worker(key, terms, embedding_model_id, job_id, cancel_event, infere
 
 def prepare_embeddings(payload):
     terms = payload.get("ontology_terms", [])
-    embedding_model_id = payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b"
+    embedding_model_id = _normalise_embedding_model_id(
+        payload, payload.get("embedding_model") or "qwen3_embedding_0_6b",
+    )
     ontology_hash = payload.get("ontology_hash", "")
     if not terms:
         return {"status": "none", "completed": 0, "total": 0,
                 "message": "No ontology terms supplied."}
+    disabled_message = _semantic_settings_error(payload, embedding_model_id)
+    if disabled_message:
+        return {"status": "disabled", "completed": 0, "total": len(terms),
+                "message": disabled_message}
 
     key = _cache_key_for_payload(terms, embedding_model_id, ontology_hash, payload)
     with _CACHE_LOCK:
@@ -279,7 +315,9 @@ def prepare_embeddings(payload):
 
 def embedding_status(payload):
     terms = payload.get("ontology_terms", [])
-    embedding_model_id = payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b"
+    embedding_model_id = _normalise_embedding_model_id(
+        payload, payload.get("embedding_model") or "qwen3_embedding_0_6b",
+    )
     ontology_hash = payload.get("ontology_hash", "")
     ontology_fingerprint = payload.get("ontology_fingerprint", "")
     config_fp = _config_fingerprint(payload)
@@ -319,7 +357,7 @@ def embedding_status(payload):
 
 def cancel_embeddings(payload):
     ontology_hash = payload.get("ontology_hash", "")
-    embedding_model_id = payload.get("embedding_model")
+    embedding_model_id = _normalise_embedding_model_id(payload, payload.get("embedding_model"))
     config_fp = _config_fingerprint(payload)
     cancelled = 0
     with _CACHE_LOCK:
@@ -393,8 +431,14 @@ def rank_terms(payload):
     if not rule or not terms:
         return {"candidates": [], "method": "none", "message": "Provide a rule and an ontology."}
 
-    embedding_model_id = payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b"
+    embedding_model_id = _normalise_embedding_model_id(
+        payload, payload.get("embedding_model") or "qwen3_embedding_0_6b",
+    )
     ontology_hash = payload.get("ontology_hash", "")
+    disabled_message = _semantic_settings_error(payload, embedding_model_id)
+    if disabled_message:
+        return {"candidates": [], "method": "semantic-disabled",
+                "message": disabled_message}
     allowed_types = set(payload.get("entity_types") or [])
     try:
         top_k = max(1, min(100, int(payload.get("top_k", TOP_K))))
@@ -429,20 +473,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send_json(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        send_json(self, status, payload, request_id=getattr(self, "request_id", None))
 
     def do_OPTIONS(self):
-        self._send_json(200, {"ok": True})
+        send_options(self)
+
+    def do_GET(self):
+        self.request_id = new_request_id(self.headers)
+        if self.path == "/health":
+            send_health(self, "find-relevant-terms", request_id=self.request_id)
+            return
+        self._send_json(404, {"error": "unknown endpoint"})
 
     def do_POST(self):
+        self.request_id = new_request_id(self.headers)
         if self.path not in {
             "/find-relevant-terms",
             "/prepare-ontology-embeddings",
@@ -451,10 +495,14 @@ class Handler(BaseHTTPRequestHandler):
         }:
             self._send_json(404, {"error": "unknown endpoint"})
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            payload = read_json(self)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
         from runtime_config import inference_config
-        with inference_config(_runtime_config(payload)):
+        from Logger import logger
+        with logger.request_context(self.request_id), inference_config(_runtime_config(payload)):
             if self.path == "/prepare-ontology-embeddings":
                 result = prepare_embeddings(payload)
             elif self.path == "/ontology-embedding-status":

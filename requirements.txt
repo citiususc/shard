@@ -2,7 +2,6 @@
 #
 # Core (always required)
 rdflib>=7.0
-python-dotenv>=1.0
 
 # Ontology parsing for RDF/XML (.owl/.rdf) support
 rdflib-jsonld; python_version < "3.0"   # no-op placeholder on py3; rdflib handles xml natively

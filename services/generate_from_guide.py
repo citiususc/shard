@@ -34,6 +34,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
+from ontology_io import ontology_base_namespace, ontology_prefix_block, parse_ontology_graph
+from service_http import new_request_id, read_json, send_health, send_json, send_options
+
 HOST = "127.0.0.1"
 PORT = 9103
 
@@ -59,16 +62,25 @@ def _materialize_guide(guide_content, guide_filename, is_base64):
         text = _pdf_to_text(raw)
         html = "<html><body>" + "".join(f"<p>{_esc(line)}</p>"
                                          for line in text.splitlines() if line.strip()) + "</body></html>"
-        path = os.path.join(tempfile.gettempdir(), f"br2shacl_guide_{os.getpid()}.html")
-        with open(path, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".html",
+            prefix="br2shacl_guide_",
+            delete=False,
+        ) as f:
             f.write(html)
-        return path, "1.6.1"
+            return f.name, "1.6.1"
 
     # HTML (or anything else treated as HTML)
-    path = os.path.join(tempfile.gettempdir(), f"br2shacl_guide_{os.getpid()}{suffix or '.html'}")
-    with open(path, "wb") as f:
+    with tempfile.NamedTemporaryFile(
+        mode="wb",
+        suffix=suffix or ".html",
+        prefix="br2shacl_guide_",
+        delete=False,
+    ) as f:
         f.write(raw)
-    return path, None
+        return f.name, None
 
 
 def _esc(s):
@@ -76,14 +88,26 @@ def _esc(s):
 
 
 def _pdf_to_text(raw):
+    path = None
     try:
         from pdfminer.high_level import extract_text
-        path = os.path.join(tempfile.gettempdir(), f"br2shacl_pdf_{os.getpid()}.pdf")
-        with open(path, "wb") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=".pdf",
+            prefix="br2shacl_pdf_",
+            delete=False,
+        ) as f:
             f.write(raw)
+            path = f.name
         return extract_text(path)
     except Exception as e:
         return f"[PDF extraction unavailable: {e}]"
+    finally:
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -92,103 +116,123 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Request-ID")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
     def do_OPTIONS(self):
-        self.send_response(200)
-        self._cors()
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        send_options(self)
+
+    def do_GET(self):
+        self.request_id = new_request_id(self.headers)
+        if self.path == "/health":
+            send_health(self, "generate-from-guide", request_id=self.request_id)
+            return
+        send_json(self, 404, {"error": "unknown endpoint"}, request_id=self.request_id)
 
     def _sse(self, event: dict):
+        event.setdefault("request_id", getattr(self, "request_id", None))
         self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
         self.wfile.flush()
 
     def do_POST(self):
+        self.request_id = new_request_id(self.headers)
         if self.path != "/generate-from-guide":
-            self.send_response(404)
-            self._cors()
-            self.end_headers()
+            send_json(self, 404, {"error": "unknown endpoint"}, request_id=self.request_id)
             return
 
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            payload = read_json(self)
+        except ValueError as exc:
+            send_json(self, 400, {"error": str(exc)}, request_id=self.request_id)
+            return
+        if not payload.get("ontology_content"):
+            send_json(self, 400, {"error": "Missing ontology_content."}, request_id=self.request_id)
+            return
+        try:
+            parse_ontology_graph(
+                payload.get("ontology_content", ""),
+                payload.get("ontology_filename", "ontology.ttl"),
+            )
+        except Exception as exc:
+            send_json(self, 400, {"error": str(exc)}, request_id=self.request_id)
+            return
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
+        self.send_header("X-Request-ID", self.request_id)
         self._cors()
         self.end_headers()
 
         try:
             from runtime_config import inference_config
-            with inference_config(_runtime_config(payload)):
+            from Logger import logger
+            with logger.request_context(self.request_id), inference_config(_runtime_config(payload)):
                 self._run(payload)
         except Exception as exc:
             self._sse({"type": "error", "message": str(exc),
                        "trace": traceback.format_exc()[-1500:]})
 
     def _run(self, payload):
-        from rdflib import Graph
-        import ns_utils
         from rag_inmemory import build_inmemory_retriever
         from multiagent_stream import stream_shacl_generation
 
         ontology_content = payload.get("ontology_content", "")
-        if not ontology_content:
-            self._sse({"type": "error", "message": "Missing ontology_content."})
-            return
 
         self._sse({"type": "status", "stage": "parsing", "message": "Parsing ontology…"})
-        onto = Graph(bind_namespaces="none")
-        onto.parse(data=ontology_content, format="turtle")
-        base_ns = payload.get("base_namespace") or ns_utils.derive_base_namespace(onto)
-        prefixes = payload.get("prefixes") or ns_utils.build_prefix_block(onto, base_ns)
+        onto = parse_ontology_graph(
+            ontology_content,
+            payload.get("ontology_filename", "ontology.ttl"),
+        )
+        base_ns = payload.get("base_namespace") or ontology_base_namespace(onto)
+        prefixes = payload.get("prefixes") or ontology_prefix_block(onto, base_ns)
 
         # --- Preprocess + index the guide ---------------------------------- #
-        guide_path, version_hint = _materialize_guide(
-            payload.get("guide_content", ""),
-            payload.get("guide_filename", ""),
-            payload.get("guide_is_base64", False),
-        )
-        html_version = version_hint or payload.get("html_version", "3.2.1")
-
-        def progress(stage, current, total):
-            self._sse({"type": "status", "stage": f"summarizing:{stage}",
-                       "current": current, "total": total,
-                       "message": f"Summarizing {stage} {current}/{total}…"})
-
-        self._sse({"type": "status", "stage": "preprocessing",
-                   "message": f"Preprocessing guide (v{html_version})…"})
-
-        retriever = build_inmemory_retriever(
-            file=guide_path,
-            html_version=html_version,
-            text_model_id=payload.get("text_model") or "databricks-gpt-oss-120b",
-            vision_model_id=payload.get("vision_model") or "databricks-gemma-3-12b",
-            embedding_model_id=payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
-            temperature=float(payload.get("temperature", 0.5)),
-            progress=progress,
-        )
-
-        # --- Stream generation --------------------------------------------- #
-        for event in stream_shacl_generation(
-            ontology_graph=onto,
-            retriever=retriever,
-            llm_model_id=payload.get("llm_model") or "databricks-gpt-oss-120b",
-            temperature=float(payload.get("temperature", 0.5)),
-            astrea_graph=None,
-            base_namespace=base_ns,
-            prefix_block=prefixes,
-        ):
-            self._sse(event)
-
+        guide_path = None
         try:
-            os.remove(guide_path)
-        except OSError:
-            pass
+            guide_path, version_hint = _materialize_guide(
+                payload.get("guide_content", ""),
+                payload.get("guide_filename", ""),
+                payload.get("guide_is_base64", False),
+            )
+            html_version = version_hint or payload.get("html_version", "3.2.1")
+
+            def progress(stage, current, total):
+                self._sse({"type": "status", "stage": f"summarizing:{stage}",
+                           "current": current, "total": total,
+                           "message": f"Summarizing {stage} {current}/{total}…"})
+
+            self._sse({"type": "status", "stage": "preprocessing",
+                       "message": f"Preprocessing guide (v{html_version})…"})
+
+            retriever = build_inmemory_retriever(
+                file=guide_path,
+                html_version=html_version,
+                text_model_id=payload.get("text_model") or "gpt-oss-120b",
+                vision_model_id=payload.get("vision_model") or "gemma_3_12b",
+                embedding_model_id=payload.get("embedding_model") or "qwen3_embedding_0_6b",
+                temperature=float(payload.get("temperature", 0.5)),
+                progress=progress,
+            )
+
+            # --- Stream generation ----------------------------------------- #
+            for event in stream_shacl_generation(
+                ontology_graph=onto,
+                retriever=retriever,
+                llm_model_id=payload.get("llm_model") or "gpt-oss-120b",
+                temperature=float(payload.get("temperature", 0.5)),
+                astrea_graph=None,
+                base_namespace=base_ns,
+                prefix_block=prefixes,
+            ):
+                self._sse(event)
+        finally:
+            if guide_path:
+                try:
+                    os.remove(guide_path)
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

@@ -25,10 +25,12 @@ Embeddings:
   Qwen/Qwen3-Embedding-0.6B             Uses last-token pooling (NOT mean
                                          pooling) with task-specific instructions
 
-ENVIRONMENT VARIABLES (all optional)
---------------------------------------
+CONFIGURATION
+-------------
+The demo UI sends the HuggingFace access token per request when a gated/private
+model needs it. The following environment variables remain optional tuning knobs:
+
 HF_HOME                     Override HuggingFace cache directory
-HF_TOKEN                    HuggingFace access token (for gated models)
 TORCH_DTYPE                 "float16" | "bfloat16" | "float32"  (default: auto)
 RAG_TEXT_MAX_NEW_TOKENS     Max tokens for text summarisation   (default: 256)
 RAG_IMG_MAX_NEW_TOKENS      Max tokens for image summarisation  (default: 900)
