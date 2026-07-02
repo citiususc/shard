@@ -110,7 +110,7 @@ def build_shape(payload):
     prefixes = payload.get("prefixes") or ""
     ontology_content = payload.get("ontology_content", "")
     temperature = float(payload.get("temperature", 0.5))
-    model_id = payload.get("model") or "gpt-oss-120b"
+    model_id = payload.get("model") or "databricks-qwen3-next-80b-a3b-instruct"
 
     base_ns = payload.get("base_namespace") or ""
     if not base_ns and ontology_content:

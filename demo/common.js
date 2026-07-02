@@ -22,17 +22,28 @@ const SERVICES = {
 const MODEL_CATALOG = {
   databricks: {
     chat: [
-      "gpt-oss-120b",
-      "qwen3-next80b-a3b-instruct",
-      "meta-llama-3-3-70b-instruct",
-      "qwen35-122b-a10b",
-      "gpt-oss-20b",
-      "meta-llama-3-1-8b-instruct",
-      "gemma_3_12b",
-      "llama-4-maverick",
+      "databricks-qwen3-next-80b-a3b-instruct",
+      "databricks-gpt-oss-120b",
+      "databricks-claude-sonnet-5",
+      "databricks-claude-opus-4-8",
+      "databricks-gemini-3-5-flash",
+      "databricks-meta-llama-3-3-70b-instruct",
+      "databricks-qwen35-122b-a10b",
+      "databricks-gpt-oss-20b",
+      "databricks-meta-llama-3-1-8b-instruct",
+      "databricks-gemma-3-12b",
+      "databricks-llama-4-maverick",
     ],
-    vision: ["gemma_3_12b", "llama-4-maverick"],
-    embedding: ["qwen3_embedding_0_6b", "bge_large_en", "gte_large_en"],
+    vision: [
+      "databricks-gemini-3-5-flash",
+      "databricks-gemma-3-12b",
+      "databricks-llama-4-maverick",
+    ],
+    embedding: [
+      "databricks-qwen3-embedding-0-6b",
+      "databricks-bge-large-en",
+      "databricks-gte-large-en",
+    ],
   },
   huggingface: {
     chat: [
@@ -211,19 +222,28 @@ const DEFAULT_PROVIDER = "databricks";
 const DEFAULT_TEMPERATURE = 0.5;
 
 const DATABRICKS_MODEL_ALIASES = {
-  "databricks-gpt-oss-120b": "gpt-oss-120b",
-  "databricks-qwen3-next-80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
-  "databricks-qwen3-next80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
-  "databricks-meta-llama-3-3-70b-instruct": "meta-llama-3-3-70b-instruct",
-  "databricks-qwen35-122b-a10b": "qwen35-122b-a10b",
-  "databricks-gpt-oss-20b": "gpt-oss-20b",
-  "databricks-meta-llama-3-1-8b-instruct": "meta-llama-3-1-8b-instruct",
-  "databricks-gemma-3-12b": "gemma_3_12b",
-  "databricks-llama-4-maverick": "llama-4-maverick",
-  "databricks-qwen3-embedding-0-6b": "qwen3_embedding_0_6b",
-  "databricks-qwen3_embedding_0_6b": "qwen3_embedding_0_6b",
-  "databricks-bge-large-en": "bge_large_en",
-  "databricks-gte-large-en": "gte_large_en",
+  "databricks-qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
+  "databricks-qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
+  "databricks-gemma_3_12b": "databricks-gemma-3-12b",
+  "qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
+  "qwen3-next-80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
+  "gpt-oss-120b": "databricks-gpt-oss-120b",
+  "claude-sonnet-5": "databricks-claude-sonnet-5",
+  "claude-opus-4-8": "databricks-claude-opus-4-8",
+  "gemini-3-5-flash": "databricks-gemini-3-5-flash",
+  "meta-llama-3-3-70b-instruct": "databricks-meta-llama-3-3-70b-instruct",
+  "qwen35-122b-a10b": "databricks-qwen35-122b-a10b",
+  "gpt-oss-20b": "databricks-gpt-oss-20b",
+  "meta-llama-3-1-8b-instruct": "databricks-meta-llama-3-1-8b-instruct",
+  "gemma_3_12b": "databricks-gemma-3-12b",
+  "gemma-3-12b": "databricks-gemma-3-12b",
+  "llama-4-maverick": "databricks-llama-4-maverick",
+  "qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
+  "qwen3-embedding-0-6b": "databricks-qwen3-embedding-0-6b",
+  "bge_large_en": "databricks-bge-large-en",
+  "bge-large-en": "databricks-bge-large-en",
+  "gte_large_en": "databricks-gte-large-en",
+  "gte-large-en": "databricks-gte-large-en",
 };
 
 const MODEL_ROLE_CATALOG = {
@@ -725,54 +745,47 @@ function syncPrefixesWithBaseNamespace(prefixBlock, baseNs) {
   return next;
 }
 
-function declaredPrefixes(prefixBlock) {
-  const prefixes = new Set();
-  const re = /(?:@prefix|PREFIX)\s+([^:\s]*):\s*<[^>]+>\s*\.?/gi;
+function prefixNamespace(prefixBlock, prefix) {
+  const wanted = String(prefix || "");
+  const re = /(?:@prefix|PREFIX)\s+([^:\s]*):\s*<([^>]+)>\s*\.?/gi;
   let match;
   while ((match = re.exec(prefixBlock || "")) !== null) {
-    prefixes.add(match[1] || "");
+    if ((match[1] || "") === wanted) return match[2] || "";
   }
-  return prefixes;
+  return "";
 }
 
-function stripTurtleNoise(text) {
-  return String(text || "")
-    .replace(/<[^>\s]*>/g, " ")
-    .replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, " ")
-    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, " ")
-    .replace(/#[^\n]*/g, " ");
-}
+function ensureGeneratorPrefixes(prefixBlock, baseNs) {
+  let next = prefixBlock || "";
+  const base = normalizeNamespace(baseNs);
+  const baseAlias = prefixNamespace(next, "era")
+    || prefixNamespace(next, "onto")
+    || prefixNamespace(next, "")
+    || base;
+  const shapeAlias = prefixNamespace(next, "shape")
+    || prefixNamespace(next, "era-sh")
+    || prefixNamespace(next, "onto-sh")
+    || shapesNamespace(base);
 
-function findUndeclaredPrefixes(text, prefixBlock) {
-  const declared = declaredPrefixes(prefixBlock);
-  const ignored = new Set(["http", "https", "urn", "mailto"]);
-  const missing = new Set();
-  const source = stripTurtleNoise(text);
-  const re = /(^|[^\w.-])([A-Za-z][\w.-]*|):[A-Za-z_][\w.-]*/g;
-  let match;
-  while ((match = re.exec(source)) !== null) {
-    const prefix = match[2] || "";
-    if (ignored.has(prefix)) continue;
-    if (!declared.has(prefix)) missing.add(prefix || "(default)");
+  if (!prefixNamespace(next, "era") && baseAlias) {
+    next = setPrefixLine(next, "era", baseAlias);
   }
-  return Array.from(missing).sort();
+  if (!prefixNamespace(next, "shape") && shapeAlias) {
+    next = setPrefixLine(next, "shape", shapeAlias);
+  }
+  if (!prefixNamespace(next, "era-sh") && shapeAlias) {
+    next = setPrefixLine(next, "era-sh", shapeAlias);
+  }
+  return next;
 }
 
-function findMissingRequiredPrefixes(prefixBlock, required) {
-  const declared = declaredPrefixes(prefixBlock);
-  return (required || []).filter((prefix) => !declared.has(prefix));
-}
-
-function prefixPreflight(text, prefixBlock, required = []) {
-  const missingUsed = findUndeclaredPrefixes(text, prefixBlock);
-  const missingRequired = findMissingRequiredPrefixes(prefixBlock, required);
-  const all = Array.from(new Set([...missingUsed, ...missingRequired])).sort();
-  if (!all.length) return { ok: true, missing: [] };
-  return {
-    ok: false,
-    missing: all,
-    message: `Missing prefix declaration(s): ${all.join(", ")}. Add them in "Prefixes in scope" before continuing.`,
-  };
+function repairOntologyPrefixes(o) {
+  if (!o) return o;
+  const repaired = ensureGeneratorPrefixes(o.prefixes || "", o.baseNamespace || "");
+  if (repaired === (o.prefixes || "")) return o;
+  const next = { ...o, prefixes: repaired };
+  setOntology(next);
+  return next;
 }
 
 async function cancelOntologyEmbeddingPreparation(target = activeOntologyEmbedding) {
@@ -907,7 +920,7 @@ async function wireOntologyControls(onLoaded) {
   const resetPrefixes = byId("reset-prefixes");
 
   const renderFromStore = () => {
-    const o = getOntology();
+    const o = repairOntologyPrefixes(getOntology());
     if (!o) return;
     if (summary) summary.textContent = ontologySummaryText(o);
     if (nsInput) nsInput.value = o.baseNamespace || "";
@@ -942,7 +955,8 @@ async function wireOntologyControls(onLoaded) {
           filename: file.name, content,
           contentHash,
           baseNamespace: data.base_namespace || "",
-          prefixes: data.prefixes || "", entities: data.entities || [],
+          prefixes: ensureGeneratorPrefixes(data.prefixes || "", data.base_namespace || ""),
+          entities: data.entities || [],
         });
         setStatus(`Ontology loaded (${data.entities.length} entities)`);
         renderFromStore();
@@ -957,7 +971,10 @@ async function wireOntologyControls(onLoaded) {
     const o = getOntology();
     if (!o) return;
     o.baseNamespace = normalizeNamespace(nsInput.value);
-    o.prefixes = syncPrefixesWithBaseNamespace(o.prefixes || "", o.baseNamespace);
+    o.prefixes = ensureGeneratorPrefixes(
+      syncPrefixesWithBaseNamespace(o.prefixes || "", o.baseNamespace),
+      o.baseNamespace,
+    );
     setOntology(o);
     nsInput.value = o.baseNamespace;
     if (prefixEditor) {
@@ -975,7 +992,10 @@ async function wireOntologyControls(onLoaded) {
       method: "POST",
       body: JSON.stringify({ filename: o.filename, content: o.content }),
     }, { label: "Reset ontology prefixes", timeoutMs: 30000 });
-    o.prefixes = syncPrefixesWithBaseNamespace(data.prefixes || "", o.baseNamespace || data.base_namespace || "");
+    o.prefixes = ensureGeneratorPrefixes(
+      syncPrefixesWithBaseNamespace(data.prefixes || "", o.baseNamespace || data.base_namespace || ""),
+      o.baseNamespace || data.base_namespace || "",
+    );
     setOntology(o);
     if (prefixEditor) { prefixEditor.value = o.prefixes; refreshHighlight("prefixes-editor"); }
   });
@@ -1174,15 +1194,6 @@ async function copyToClipboard(text) {
 }
 
 async function validateTurtle(shape, prefixes) {
-  const preflight = prefixPreflight(shape, prefixes, ["sh"]);
-  if (!preflight.ok) {
-    return {
-      valid: false,
-      error: preflight.message,
-      error_type: "prefix",
-      missing_prefixes: preflight.missing,
-    };
-  }
   return fetchJSON(SERVICES.validate, {
     method: "POST",
     body: JSON.stringify({ shape, prefixes }),

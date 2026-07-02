@@ -261,7 +261,7 @@ def _prepare_worker(key, terms, embedding_model_id, job_id, cancel_event, infere
 def prepare_embeddings(payload):
     terms = payload.get("ontology_terms", [])
     embedding_model_id = _normalise_embedding_model_id(
-        payload, payload.get("embedding_model") or "qwen3_embedding_0_6b",
+        payload, payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
     )
     ontology_hash = payload.get("ontology_hash", "")
     if not terms:
@@ -316,7 +316,7 @@ def prepare_embeddings(payload):
 def embedding_status(payload):
     terms = payload.get("ontology_terms", [])
     embedding_model_id = _normalise_embedding_model_id(
-        payload, payload.get("embedding_model") or "qwen3_embedding_0_6b",
+        payload, payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
     )
     ontology_hash = payload.get("ontology_hash", "")
     ontology_fingerprint = payload.get("ontology_fingerprint", "")
@@ -432,7 +432,7 @@ def rank_terms(payload):
         return {"candidates": [], "method": "none", "message": "Provide a rule and an ontology."}
 
     embedding_model_id = _normalise_embedding_model_id(
-        payload, payload.get("embedding_model") or "qwen3_embedding_0_6b",
+        payload, payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
     )
     ontology_hash = payload.get("ontology_hash", "")
     disabled_message = _semantic_settings_error(payload, embedding_model_id)

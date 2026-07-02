@@ -209,9 +209,9 @@ class Handler(BaseHTTPRequestHandler):
             retriever = build_inmemory_retriever(
                 file=guide_path,
                 html_version=html_version,
-                text_model_id=payload.get("text_model") or "gpt-oss-120b",
-                vision_model_id=payload.get("vision_model") or "gemma_3_12b",
-                embedding_model_id=payload.get("embedding_model") or "qwen3_embedding_0_6b",
+                text_model_id=payload.get("text_model") or "databricks-qwen3-next-80b-a3b-instruct",
+                vision_model_id=payload.get("vision_model") or "databricks-gemini-3-5-flash",
+                embedding_model_id=payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
                 temperature=float(payload.get("temperature", 0.5)),
                 progress=progress,
             )
@@ -220,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
             for event in stream_shacl_generation(
                 ontology_graph=onto,
                 retriever=retriever,
-                llm_model_id=payload.get("llm_model") or "gpt-oss-120b",
+                llm_model_id=payload.get("llm_model") or "databricks-qwen3-next-80b-a3b-instruct",
                 temperature=float(payload.get("temperature", 0.5)),
                 astrea_graph=None,
                 base_namespace=base_ns,

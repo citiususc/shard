@@ -4,12 +4,12 @@ model_loader.py
 Unified model loader that routes to the appropriate backend:
 
   Text/Chat   → HuggingFace if model_id contains '/'  (org/model-name)
-                Databricks  if model_id contains no '/' (endpoint short name)
+                Databricks  if model_id contains no '/' (endpoint name)
 
   Embeddings  → HuggingFace by default (Qwen/Qwen3-Embedding-0.6B)
-                Databricks  if a short endpoint name is passed (no '/')
+                Databricks  if an endpoint name is passed (no '/')
 
-  Vision      → Databricks by default (gemma_3_12b)
+  Vision      → Databricks by default (databricks-gemini-3-5-flash)
                 HuggingFace if a HuggingFace model ID is passed (contains '/')
 
 Public API matches both backends exactly — all call sites remain unchanged.
@@ -65,8 +65,8 @@ def _is_hf_model_id(model_id: str) -> bool:
     Examples:
         "meta-llama/Llama-3.3-70B-Instruct"  → True  (HuggingFace)
         "openai/gpt-oss-120b"                 → True  (HuggingFace)
-        "llama3_3_70b"                         → False (Databricks)
-        "gemma_3_12b"                          → False (Databricks)
+        "databricks-qwen3-next-80b-a3b-instruct" → False (Databricks)
+        "databricks-gemini-3-5-flash"            → False (Databricks)
     """
     return "/" in model_id
 
@@ -142,7 +142,7 @@ def get_chat_llm(
 
 
 # ---------------------------------------------------------------------------
-# Embeddings — HuggingFace by default, Databricks if short endpoint name
+# Embeddings — HuggingFace by default, Databricks if endpoint name
 # ---------------------------------------------------------------------------
 
 def get_embedding_function(
@@ -152,7 +152,7 @@ def get_embedding_function(
     Return a Chroma-compatible embeddings object.
 
     Default: HuggingFace (Qwen/Qwen3-Embedding-0.6B).
-    Pass a Databricks short endpoint name (no '/') to use Databricks instead.
+    Pass a Databricks endpoint name (no '/') to use Databricks instead.
     """
     if _use_hf_backend(embedding_model_id):
         logger.debug(
@@ -171,12 +171,12 @@ def get_embedding_function(
 # ---------------------------------------------------------------------------
 
 def get_vision_backend(
-    vision_model_id: str = "gemma_3_12b",
+    vision_model_id: str = "databricks-gemini-3-5-flash",
 ):
     """
     Return a vision backend dict compatible with rag.py.
 
-    Default: Databricks (gemma_3_12b).
+    Default: Databricks (databricks-gemini-3-5-flash).
     Pass a HuggingFace model ID (contains '/') to use HuggingFace instead.
     """
     if _use_hf_backend(vision_model_id):

@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — Rule → Shape</title>
-    <link rel="stylesheet" href="styles.css?v=22">
+    <link rel="stylesheet" href="styles.css?v=27">
   </head>
-  <body>
+  <body class="app-page rule-page">
     <header class="topbar">
       <div class="brand">
         <a class="brand-logo-link" href="index.html" aria-label="CITIUS home">
@@ -88,7 +88,7 @@
         <div class="focus-layout">
           <!-- ── Column 2: context + rule + search + target ── -->
           <div class="evidence-column">
-            <section class="section-block">
+            <section class="section-block generation-context-block">
               <div class="section-title"><h2>Generation context</h2></div>
               <label class="field-label" for="domain-context">Domain context</label>
               <textarea id="domain-context" class="textarea compact" placeholder="Background about the domain the ontology models (e.g. records, units, naming conventions, lifecycle states)."></textarea>
@@ -96,15 +96,15 @@
               <textarea id="generation-guidance" class="textarea compact" placeholder="Hints on how to generate the shapes (e.g. always add sh:message, prefer sh:pattern for codes, keep cardinalities strict)."></textarea>
             </section>
 
-            <section class="section-block">
+            <section class="section-block business-rule-block">
               <div class="section-title"><h2>Business rule</h2></div>
               <textarea id="business-rule" class="textarea large" placeholder="e.g. Every asset must have exactly one identifier and one lifecycle status."></textarea>
             </section>
 
-            <section class="section-block">
+            <section class="section-block ontology-search-block">
               <div class="section-title">
                 <h2>Search ontology</h2>
-                <div class="switcher" role="group" aria-label="Entity type filter" style="margin-top:0;max-width:220px">
+                <div class="switcher entity-filter-switch" role="group" aria-label="Entity type filter">
                   <button class="switch-button active" data-filter="all">All</button>
                   <button class="switch-button" data-filter="class">Classes</button>
                   <button class="switch-button" data-filter="property">Properties</button>
@@ -116,13 +116,13 @@
                 <button id="clear-related-terms" class="text-button" hidden>Show all</button>
               </div>
               <p id="ontology-search-status" class="microcopy">Search by text or rank terms against the business rule.</p>
-              <div id="entity-list" class="entity-list" style="max-height:248px"></div>
+              <div id="entity-list" class="entity-list"></div>
             </section>
           </div>
 
           <!-- ── Column 3: prefixes (top) + target + editor + accepted ── -->
           <div class="editor-column">
-            <section class="section-block">
+            <section class="section-block prefixes-block">
               <div class="section-title">
                 <h2>Prefixes in scope</h2>
                 <button id="reset-prefixes" class="text-button">Reset</button>
@@ -133,7 +133,7 @@
               </div>
             </section>
 
-            <section class="section-block">
+            <section class="section-block selected-target-block">
               <div class="section-title">
                 <h2 id="selected-label">Selected target</h2>
                 <span id="selected-kind" class="tag">—</span>
@@ -148,7 +148,7 @@
               <button id="generate-shape" class="primary-button full-width" disabled>Generate SHACL shape</button>
             </section>
 
-            <section class="section-block">
+            <section class="section-block shape-editor-block">
               <div class="section-title">
                 <h2 id="editor-title">Editable shape</h2>
                 <button id="copy-shape" class="secondary-button">Copy</button>
@@ -164,7 +164,7 @@
               <div id="validation-panel" class="validation-panel">Write a rule, choose a target, and generate a shape.</div>
             </section>
 
-            <section class="section-block">
+            <section class="section-block accepted-shapes-block">
               <div class="section-title">
                 <h2>Accepted shapes</h2>
                 <span id="coverage-tag" class="tag">0 accepted</span>
@@ -185,7 +185,7 @@
       <pre class="logs-content" id="logs-content">No logs yet. Generate a shape to see the pipeline output here.</pre>
     </section>
 
-    <script src="common.js?v=16"></script>
-    <script src="rule.js?v=13"></script>
+    <script src="common.js?v=18"></script>
+    <script src="rule.js?v=14"></script>
   </body>
 </html>

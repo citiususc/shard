@@ -69,8 +69,8 @@ for three surgical edits so the demo runs self-contained without a GPU or Redis:
 * `model_loader.py` — routes by the provider selected in the UI, with the old
   HuggingFace-by-slash heuristic as fallback.
 * `model_loader_databricks.py` — accepts UI-supplied Databricks credentials and
-  normalizes older `databricks-*` aliases to the actual endpoint names sent to
-  the Databricks Serving API.
+  normalizes older shortened aliases to the actual `databricks-*` endpoint
+  names sent to the Databricks Serving API.
 * `multiagent.py` — `torch.cuda.empty_cache()` is guarded by
   `torch.cuda.is_available()`.
 
@@ -100,9 +100,10 @@ No `.env` file is required or read by `run_demo.py`. Configure inference from th
 5. Adjust temperature.
 
 The Databricks catalog uses the endpoint names that are sent to the Serving API
-(`qwen3_embedding_0_6b`, `gemma_3_12b`, etc.). Custom Databricks model ids should
-therefore match the endpoint name deployed in your workspace. The UI validates a
-custom model before adding it.
+(`databricks-qwen3-embedding-0-6b`, `databricks-gemini-3-5-flash`, etc.).
+Custom Databricks model ids should therefore match the endpoint name deployed in
+your workspace. Hugging Face keeps its repository-style ids (`org/model`). The UI
+validates a custom model before adding it.
 
 > Selecting the **HuggingFace** backend runs inference locally and additionally
 > requires `torch` and `transformers` (and, realistically, a GPU for the large

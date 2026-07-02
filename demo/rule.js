@@ -191,19 +191,6 @@ async function generateShape() {
   panel.className = "validation-panel";
 
   try {
-    const prefixCheck = prefixPreflight([
-      selectedEntity.iri,
-      selectedEntity.domain,
-      selectedEntity.range,
-      byId("ontology-note").value,
-    ].join("\n"), o.prefixes, ["sh", "shape", "era", "era-sh"]);
-    if (!prefixCheck.ok) {
-      panel.className = "validation-panel prefix-error";
-      panel.textContent = `Prefix preflight failed before calling the model:\n${prefixCheck.message}`;
-      setStatus("Missing prefix declaration");
-      return;
-    }
-
     setStatus("Checking model configuration…");
     panel.className = "validation-panel backend";
     panel.textContent = "Checking model configuration before generation…";
@@ -271,10 +258,8 @@ async function checkShape() {
     const data = await validateTurtle(shape, (o && o.prefixes) || "");
     if (data.valid) { panel.className = "validation-panel ok"; panel.textContent = "Valid Turtle / SHACL."; }
     else {
-      panel.className = data.error_type === "prefix"
-        ? "validation-panel prefix-error"
-        : "validation-panel shape-error";
-      panel.textContent = `${data.error_type === "prefix" ? "Prefix preflight" : "Shape/Turtle parse"} error:\n${data.error}`;
+      panel.className = "validation-panel shape-error";
+      panel.textContent = `Shape/Turtle parse error:\n${data.error}`;
     }
   } catch (e) {
     panel.className = "validation-panel backend error";
@@ -289,9 +274,7 @@ async function acceptCurrent() {
   const data = await validateTurtle(shape, (o && o.prefixes) || "");
   if (!data.valid) {
     const panel = byId("validation-panel");
-    panel.className = data.error_type === "prefix"
-      ? "validation-panel prefix-error"
-      : "validation-panel shape-error";
+    panel.className = "validation-panel shape-error";
     panel.textContent = `Cannot accept invalid Turtle/SHACL:\n${data.error}`;
     return;
   }

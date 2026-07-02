@@ -11,9 +11,9 @@ MODEL MAPPING
 -------------
 Role            Local model                         Databricks endpoint
 ────────────────────────────────────────────────────────────────────────
-Text / Chat     meta-llama/Llama-3.3-70B-Instruct  llama3_3_70b
-Vision          OpenGVLab/InternVL3_5-38B          gemma_3_12b
-Embeddings      BAAI/bge-large-en-v1.5             qwen3_embedding_0_6b
+Text / Chat     meta-llama/Llama-3.3-70B-Instruct  databricks-qwen3-next-80b-a3b-instruct
+Vision          OpenGVLab/InternVL3_5-38B          databricks-gemini-3-5-flash
+Embeddings      BAAI/bge-large-en-v1.5             databricks-qwen3-embedding-0-6b
 
 CONFIGURATION
 -------------
@@ -58,29 +58,38 @@ from runtime_config import get_databricks_base_url, get_databricks_token
 # ---------------------------------------------------------------------------
 # Default endpoint names
 # ---------------------------------------------------------------------------
-DEFAULT_LLM_MODEL_ID = "qwen3-next80b-a3b-instruct"
-DEFAULT_TEXT_MODEL_ID = "qwen3-next80b-a3b-instruct"
-DEFAULT_VISION_MODEL_ID = "gemma_3_12b"
-DEFAULT_EMBEDDING_MODEL_ID = "qwen3_embedding_0_6b"
+DEFAULT_LLM_MODEL_ID = "databricks-qwen3-next-80b-a3b-instruct"
+DEFAULT_TEXT_MODEL_ID = "databricks-qwen3-next-80b-a3b-instruct"
+DEFAULT_VISION_MODEL_ID = "databricks-gemini-3-5-flash"
+DEFAULT_EMBEDDING_MODEL_ID = "databricks-qwen3-embedding-0-6b"
 DEFAULT_TEMPERATURE = 0.50
 
-# UI/catalog aliases kept for backward compatibility with earlier builds that
-# exposed Databricks Foundation Model style ids. The Serving API payload must
-# receive the actual endpoint name deployed in the workspace.
+# Aliases kept for backward compatibility with earlier builds/saved sessions
+# that stored shortened local names. The Databricks Serving API payload receives
+# the actual endpoint name deployed in the workspace.
 DATABRICKS_MODEL_ALIASES = {
-    "databricks-gpt-oss-120b": "gpt-oss-120b",
-    "databricks-qwen3-next-80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
-    "databricks-qwen3-next80b-a3b-instruct": "qwen3-next80b-a3b-instruct",
-    "databricks-meta-llama-3-3-70b-instruct": "meta-llama-3-3-70b-instruct",
-    "databricks-qwen35-122b-a10b": "qwen35-122b-a10b",
-    "databricks-gpt-oss-20b": "gpt-oss-20b",
-    "databricks-meta-llama-3-1-8b-instruct": "meta-llama-3-1-8b-instruct",
-    "databricks-gemma-3-12b": "gemma_3_12b",
-    "databricks-llama-4-maverick": "llama-4-maverick",
-    "databricks-qwen3-embedding-0-6b": "qwen3_embedding_0_6b",
-    "databricks-qwen3_embedding_0_6b": "qwen3_embedding_0_6b",
-    "databricks-bge-large-en": "bge_large_en",
-    "databricks-gte-large-en": "gte_large_en",
+    "databricks-qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
+    "databricks-qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
+    "databricks-gemma_3_12b": "databricks-gemma-3-12b",
+    "qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
+    "qwen3-next-80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
+    "gpt-oss-120b": "databricks-gpt-oss-120b",
+    "claude-sonnet-5": "databricks-claude-sonnet-5",
+    "claude-opus-4-8": "databricks-claude-opus-4-8",
+    "gemini-3-5-flash": "databricks-gemini-3-5-flash",
+    "meta-llama-3-3-70b-instruct": "databricks-meta-llama-3-3-70b-instruct",
+    "qwen35-122b-a10b": "databricks-qwen35-122b-a10b",
+    "gpt-oss-20b": "databricks-gpt-oss-20b",
+    "meta-llama-3-1-8b-instruct": "databricks-meta-llama-3-1-8b-instruct",
+    "gemma_3_12b": "databricks-gemma-3-12b",
+    "gemma-3-12b": "databricks-gemma-3-12b",
+    "llama-4-maverick": "databricks-llama-4-maverick",
+    "qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
+    "qwen3-embedding-0-6b": "databricks-qwen3-embedding-0-6b",
+    "bge_large_en": "databricks-bge-large-en",
+    "bge-large-en": "databricks-bge-large-en",
+    "gte_large_en": "databricks-gte-large-en",
+    "gte-large-en": "databricks-gte-large-en",
 }
 
 
@@ -392,7 +401,7 @@ def get_chat_llm(
 
 class _DatabricksEmbeddings:
     """
-    Chroma-compatible embeddings wrapper using Databricks qwen3_embedding_0_6b.
+    Chroma-compatible embeddings wrapper using a Databricks embeddings endpoint.
 
     Applies:
     - BGE-style query prefix on embed_query()
@@ -521,7 +530,7 @@ def get_embedding_function(
     embedding_model_id: str = DEFAULT_EMBEDDING_MODEL_ID,
 ) -> _DatabricksEmbeddings:
     """
-    Return a Chroma-compatible embeddings object backed by Databricks qwen3_embedding_0_6b.
+    Return a Chroma-compatible embeddings object backed by a Databricks endpoint.
     Drop-in replacement for model_loader.get_embedding_function().
     """
     embedding_model_id = normalize_model_id(embedding_model_id)
@@ -541,7 +550,7 @@ def _pil_to_base64(img: Image.Image) -> str:
 
 class _DatabricksVisionModel:
     """
-    Vision model backed by Databricks gemma_3_12b via Chat Completions API.
+    Vision model backed by a Databricks vision-capable endpoint via Chat Completions API.
 
     Exposes the same .chat() interface that rag.py uses with InternVL:
         out = model.chat(tokenizer, pixel_values, question, generation_config)
