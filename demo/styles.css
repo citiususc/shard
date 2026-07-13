@@ -829,9 +829,17 @@ body.landing-page .hero {
   }
 
   body.app-page .inline-panel {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     margin-top: 14px;
     padding-top: 12px;
+  }
+
+  body.app-page .rail #model-config-status {
+    margin-top: auto;
+    padding-top: 8px;
   }
 
   body.app-page .canvas {
@@ -1153,6 +1161,112 @@ body.landing-page .hero {
   body.rule-page .ontology-search-block .entity-list {
     height: clamp(286px, 28vh, 300px);
     max-height: clamp(286px, 28vh, 300px) !important;
+  }
+}
+
+@media (min-width: 1061px) and (min-height: 980px) {
+  body.app-page .rail {
+    padding: 20px 16px 24px;
+  }
+
+  body.app-page .rail .file-drop {
+    min-height: 68px;
+    padding: 12px;
+  }
+
+  body.app-page .rail .session-actions {
+    margin-top: 12px;
+    gap: 8px;
+  }
+
+  body.app-page .rail .session-actions .secondary-button,
+  body.app-page .rail .switch-button,
+  body.app-page .rail .secondary-button,
+  body.app-page .rail .primary-button {
+    min-height: 38px;
+  }
+
+  body.app-page .rail .field-label {
+    margin: 13px 0 7px;
+  }
+
+  body.app-page .rail .input {
+    height: 40px;
+  }
+
+  body.app-page .rail .microcopy {
+    margin-top: 7px;
+    line-height: 1.36;
+  }
+
+  body.app-page .rail .inline-panel {
+    margin-top: 22px;
+    padding-top: 18px;
+  }
+
+  body.app-page .rail .provider-config {
+    margin-top: 16px;
+  }
+
+  body.app-page .rail .switcher {
+    margin-top: 14px;
+  }
+
+  body.app-page .rail .custom-model-row {
+    gap: 8px;
+  }
+
+  body.rule-page .rail {
+    padding-top: 24px;
+    padding-bottom: 30px;
+  }
+
+  body.rule-page .rail .panel-heading {
+    margin-bottom: 8px;
+  }
+
+  body.rule-page .rail .file-drop {
+    min-height: clamp(92px, 8vh, 118px);
+    padding: 18px 14px;
+  }
+
+  body.rule-page .rail .session-actions {
+    margin-top: 18px;
+  }
+
+  body.rule-page .rail .session-actions .secondary-button {
+    min-height: 42px;
+  }
+
+  body.rule-page .rail .inline-panel {
+    margin-top: 34px;
+    padding-top: 26px;
+  }
+
+  body.rule-page .rail .field-label {
+    margin: 17px 0 8px;
+  }
+
+  body.rule-page .rail .input {
+    height: 44px;
+  }
+
+  body.rule-page .rail .switcher {
+    margin-top: 16px;
+  }
+
+  body.rule-page .rail .switch-button,
+  body.rule-page .rail .secondary-button,
+  body.rule-page .rail .primary-button {
+    min-height: 42px;
+  }
+
+  body.rule-page .rail .provider-config {
+    margin-top: 20px;
+  }
+
+  body.rule-page .rail #model-config-status {
+    padding-top: 18px;
   }
 }
 
