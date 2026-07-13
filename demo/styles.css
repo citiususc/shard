@@ -927,8 +927,13 @@ body.landing-page .hero {
   }
 
   body.app-page .custom-model-row {
-    grid-template-columns: minmax(78px, 0.66fr) minmax(0, 1fr) auto;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  body.app-page .custom-model-row .secondary-button {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   body.app-page .textarea {
