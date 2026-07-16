@@ -9,7 +9,7 @@ Unified model loader that routes to the appropriate backend:
   Embeddings  → HuggingFace by default (Qwen/Qwen3-Embedding-0.6B)
                 Databricks  if an endpoint name is passed (no '/')
 
-  Vision      → Databricks by default (databricks-gemini-3-5-flash)
+  Vision      → Databricks by default (system.ai.gemma-3-12b)
                 HuggingFace if a HuggingFace model ID is passed (contains '/')
 
 Public API matches both backends exactly — all call sites remain unchanged.
@@ -65,8 +65,8 @@ def _is_hf_model_id(model_id: str) -> bool:
     Examples:
         "meta-llama/Llama-3.3-70B-Instruct"  → True  (HuggingFace)
         "openai/gpt-oss-120b"                 → True  (HuggingFace)
-        "databricks-qwen3-next-80b-a3b-instruct" → False (Databricks)
-        "databricks-gemini-3-5-flash"            → False (Databricks)
+        "system.ai.gemma-3-12b" → False (Databricks)
+        "gemma-3-12b"           → False (Databricks)
     """
     return "/" in model_id
 
@@ -171,12 +171,12 @@ def get_embedding_function(
 # ---------------------------------------------------------------------------
 
 def get_vision_backend(
-    vision_model_id: str = "databricks-gemini-3-5-flash",
+    vision_model_id: str = "system.ai.gemma-3-12b",
 ):
     """
     Return a vision backend dict compatible with rag.py.
 
-    Default: Databricks (databricks-gemini-3-5-flash).
+    Default: Databricks (system.ai.gemma-3-12b).
     Pass a HuggingFace model ID (contains '/') to use HuggingFace instead.
     """
     if _use_hf_backend(vision_model_id):

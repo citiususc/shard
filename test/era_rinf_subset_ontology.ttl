@@ -1,0 +1,83 @@
+@prefix era: <http://data.europa.eu/949/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+era:RinfRuleTargetSubsetOntology
+    a owl:Ontology ;
+    rdfs:label "ERA RINF rule-target resolver subset" ;
+    rdfs:comment "Compact ERA/RINF vocabulary subset used to test rule-to-target resolution on normative prose." .
+
+era:RunningTrack
+    a owl:Class ;
+    rdfs:label "Running track" ;
+    rdfs:comment "A track in a section of line for which infrastructure parameters are reported." .
+
+era:OperationalPoint
+    a owl:Class ;
+    rdfs:label "Operational point" ;
+    rdfs:comment "A railway location such as a station, junction or technical point." .
+
+era:PlatformEdge
+    a owl:Class ;
+    rdfs:label "Platform edge" ;
+    rdfs:comment "The edge of a platform available for passenger train stopping." .
+
+era:ContactLineSystem
+    a owl:Class ;
+    rdfs:label "Contact line system" ;
+    rdfs:comment "An electrification supply system installed on a running track." .
+
+era:TrainDetectionSystem
+    a owl:Class ;
+    rdfs:label "Train detection system" ;
+    rdfs:comment "A technical system used to detect the presence of trains." .
+
+era:MaximumSpeedAndCantDeficiency
+    a owl:Class ;
+    rdfs:label "Maximum speed and cant deficiency" ;
+    rdfs:comment "A profile describing speed and cant deficiency limits." .
+
+era:maximumPermittedSpeed
+    a owl:DatatypeProperty ;
+    rdfs:domain era:RunningTrack ;
+    rdfs:range xsd:integer ;
+    rdfs:label "maximum permitted speed" ;
+    rdfs:comment "The highest speed allowed for operation on a running track, expressed in kilometres per hour." .
+
+era:contactLineSystemType
+    a owl:ObjectProperty ;
+    rdfs:domain era:RunningTrack ;
+    rdfs:range era:ContactLineSystem ;
+    rdfs:label "contact line system type" ;
+    rdfs:comment "Links a running track to the type of electrification supply arrangement installed for traction energy." .
+
+era:trainDetectionSystemType
+    a owl:ObjectProperty ;
+    rdfs:domain era:RunningTrack ;
+    rdfs:range era:TrainDetectionSystem ;
+    rdfs:label "train detection system type" ;
+    rdfs:comment "Links a running track to the technical arrangement used to prove train presence." .
+
+era:lengthOfPlatform
+    a owl:DatatypeProperty ;
+    rdfs:domain era:PlatformEdge ;
+    rdfs:range xsd:integer ;
+    rdfs:label "length of platform" ;
+    rdfs:comment "Usable platform length available for stopping passenger trains, expressed in metres." .
+
+era:opType
+    a owl:ObjectProperty ;
+    rdfs:domain era:OperationalPoint ;
+    rdfs:range xsd:anyURI ;
+    rdfs:label "operational point type" ;
+    rdfs:comment "Classifies the operational point, for example station, junction, border point or technical point." .
+
+era:gsmRVersion
+    a owl:DatatypeProperty ;
+    rdfs:domain era:RunningTrack ;
+    rdfs:range xsd:string ;
+    rdfs:label "GSM-R version" ;
+    rdfs:comment "Version or technical profile of the GSM-R radio communication installation available on a running track." .
+

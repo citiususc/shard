@@ -23,9 +23,11 @@ configuration, prefixes and accepted-shape list (persisted in the browser):
    embedding model and inference configuration for the service session. Uses
    the real generator prompts and the rdflib parse-and-retry loop.
 
-2. **Guide → Shapes** (`guide.html`) — upload the full application guide (HTML or
-   PDF). The multi-agent pipeline generates a shape for every ontology property
-   and **streams them in one by one** over Server-Sent-Events, with a
+2. **Guide → Shapes** (`guide.html`) — upload a filled Business Rules template
+   (`.html` or `.md`) based on the templates available in the UI. The service
+   validates the template structure, extracts the non-empty business rules,
+   indexes them as generation context, then generates a shape for every ontology
+   property and **streams them in one by one** over Server-Sent-Events, with a
    `X / Y SHACL shapes generated` progress bar. Shapes that still fail to parse
    after 10 attempts are surfaced anyway, marked invalid with the parser error,
    so you can fix them by hand.
@@ -43,13 +45,14 @@ br2shacl-ui/
 │   ├── index.html              # landing
 │   ├── rule.html  / rule.js    # Workflow 1
 │   ├── guide.html / guide.js   # Workflow 2
+│   ├── templates/              # Business Rules .html/.md upload templates
 │   ├── common.js               # shared state, models, ontology, prefixes, export
 │   └── styles.css
 ├── services/
 │   ├── parse_ontology.py       # :9100  parse + derive base namespace + prefixes
 │   ├── find_relevant_terms.py  # :9101  semantic ranking (embeddings) + lexical fallback
 │   ├── build_shacl_shapes.py   # :9102  single-rule generation + /validate-shape
-│   └── generate_from_guide.py  # :9103  full-guide generation, streamed (SSE)
+│   └── generate_from_guide.py  # :9103  template-guided generation, streamed (SSE)
 └── text2shacl_core/            # vendored text2shacl (the real pipeline)
     ├── model_loader*.py · runtime_config.py · utils.py · prompts.py · Logger.py
     ├── preprocess_html*.py · multiagent.py · rag.py
@@ -69,8 +72,8 @@ for three surgical edits so the demo runs self-contained without a GPU or Redis:
 * `model_loader.py` — routes by the provider selected in the UI, with the old
   HuggingFace-by-slash heuristic as fallback.
 * `model_loader_databricks.py` — accepts UI-supplied Databricks credentials and
-  normalizes older shortened aliases to the actual `databricks-*` endpoint
-  names sent to the Databricks Serving API.
+  converts visible AI Gateway model names such as `gemma-3-12b` into the
+  `system.ai.*` identifiers expected by the Databricks OpenAI-compatible API.
 * `multiagent.py` — `torch.cuda.empty_cache()` is guarded by
   `torch.cuda.is_available()`.
 
@@ -80,7 +83,10 @@ is replaced by one built from the ontology's own prefixes, with `era:`/`era-sh:`
 aliased to the base/shapes namespaces so the generator prompts keep working.
 
 Mode B avoids Redis by using an in-memory docstore + ephemeral Chroma
-(`rag_inmemory.py`), and streams per-property results via `multiagent_stream.py`.
+(`rag_inmemory.py`). For the Guide workflow, uploaded `.html` / `.md` files must
+match the Business Rules templates exposed in the UI; the backend validates the
+template, extracts rule chunks directly, indexes those chunks, and streams
+per-property results via `multiagent_stream.py`.
 
 ---
 
@@ -99,11 +105,10 @@ No `.env` file is required or read by `run_demo.py`. Configure inference from th
 4. Select model ids per role or add a custom model manually.
 5. Adjust temperature.
 
-The Databricks catalog uses the endpoint names that are sent to the Serving API
-(`databricks-qwen3-embedding-0-6b`, `databricks-gemini-3-5-flash`, etc.).
-Custom Databricks model ids should therefore match the endpoint name deployed in
-your workspace. Hugging Face keeps its repository-style ids (`org/model`). The UI
-validates a custom model before adding it.
+The Databricks catalog shows the short AI Gateway names visible in the Databricks
+UI (`gemma-3-12b`, `qwen3-embedding-0-6b`, etc.). Requests are sent internally as
+`system.ai.*` model ids. Hugging Face keeps its repository-style ids (`org/model`).
+The UI validates a custom model before adding it.
 
 > Selecting the **HuggingFace** backend runs inference locally and additionally
 > requires `torch` and `transformers` (and, realistically, a GPU for the large
@@ -131,8 +136,7 @@ Then open:
 ## Notes
 
 * **Backends & models.** The Inference backend toggle (Databricks / HuggingFace)
-  drives which models appear in each dropdown, split by role: chat (generation and
-  guide summaries), multimodal/vision (image description in the guide workflow) and
+  drives which models appear in each dropdown, split by role: chat/generation and
   embedding (term ranking and RAG indexing). Databricks endpoint names must match
   those deployed in your workspace; if validation fails, pick a model that is
   **Ready** in your Serving tab.
@@ -141,8 +145,11 @@ Then open:
   the term-ranking service caches the entity embedding matrix per ontology and
   inference configuration. If Databricks token/base URL are missing, semantic
   ranking is not started and the UI shows that model settings must be configured.
-* **PDF guides.** PDFs are converted to text best-effort (`pdfminer.six`) and
-  treated as the v1.6.1 (from-PDF) format; images are not extracted from PDFs.
+* **Guide templates.** The Guide workflow only accepts `.html`, `.htm`, `.md` or
+  `.markdown` files that keep the required Business Rules rule-section
+  structure. Metadata fields are optional and are not used to decide whether the
+  template is valid. PDFs and arbitrary HTML/Markdown guides are rejected before
+  generation.
 * **Export.** "Export accepted shapes" writes a single `.ttl` combining the
   editable prefix block, the aggregated `sh:NodeShape` block (guide workflow) and
   every accepted shape body.

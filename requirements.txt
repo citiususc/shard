@@ -2,6 +2,7 @@
 #
 # Core (always required)
 rdflib>=7.0
+pyshacl>=0.26
 
 # Ontology parsing for RDF/XML (.owl/.rdf) support
 rdflib-jsonld; python_version < "3.0"   # no-op placeholder on py3; rdflib handles xml natively
@@ -15,11 +16,10 @@ langchain-community>=0.2
 langchain-chroma>=0.1
 chromadb>=0.5
 
-# Mode B guide preprocessing
+# Mode B template parsing + legacy in-memory RAG helpers
 beautifulsoup4>=4.12
 Pillow>=10.0
 unstructured>=0.14
-pdfminer.six>=20221105     # best-effort PDF → text for uploaded PDF guides
 
 # Optional — only needed to run inference LOCALLY on a GPU via HuggingFace
 # (the demo defaults to Databricks and does NOT require these):

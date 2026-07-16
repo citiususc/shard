@@ -132,6 +132,10 @@ def _semantic_settings_error(payload, embedding_model_id):
     if not uses_databricks:
         return None
 
+    databricks = config.get("databricks") if isinstance(config, dict) else {}
+    if isinstance(databricks, dict) and databricks.get("token") and databricks.get("base_url"):
+        return None
+
     try:
         from runtime_config import get_databricks_base_url, get_databricks_token
         if get_databricks_token() and get_databricks_base_url():
@@ -261,7 +265,7 @@ def _prepare_worker(key, terms, embedding_model_id, job_id, cancel_event, infere
 def prepare_embeddings(payload):
     terms = payload.get("ontology_terms", [])
     embedding_model_id = _normalise_embedding_model_id(
-        payload, payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
+        payload, payload.get("embedding_model") or "system.ai.qwen3-embedding-0-6b",
     )
     ontology_hash = payload.get("ontology_hash", "")
     if not terms:
@@ -316,7 +320,7 @@ def prepare_embeddings(payload):
 def embedding_status(payload):
     terms = payload.get("ontology_terms", [])
     embedding_model_id = _normalise_embedding_model_id(
-        payload, payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
+        payload, payload.get("embedding_model") or "system.ai.qwen3-embedding-0-6b",
     )
     ontology_hash = payload.get("ontology_hash", "")
     ontology_fingerprint = payload.get("ontology_fingerprint", "")
@@ -391,19 +395,29 @@ def rank_semantic(rule, terms, embedding_model_id, ontology_hash="",
         job = _PREPARE_JOBS.get(key)
     if cached is None:
         if not job or job.get("status") not in {"preparing", "cancelling"}:
-            prepare_embeddings({
+            result = prepare_embeddings({
                 "ontology_terms": terms,
                 "embedding_model": embedding_model_id,
                 "ontology_hash": ontology_hash,
                 "inference_config": _runtime_config(payload),
                 "config_fingerprint": _config_fingerprint(payload),
             })
+            if result.get("status") in {"disabled", "error", "cancelled"}:
+                raise RuntimeError(result.get("message") or f"Embedding preparation failed: {result}")
         raise EmbeddingsPreparing("ontology embeddings are still being prepared")
 
     from model_loader import get_embedding_function  # imported lazily (heavy deps)
-    embedder = get_embedding_function(embedding_model_id)
-    with _model_lock(embedding_model_id):
-        rule_vec = embedder.embed_query(rule)
+    config = _runtime_config(payload)
+    if config:
+        from runtime_config import inference_config
+        with inference_config(config):
+            embedder = get_embedding_function(embedding_model_id)
+            with _model_lock(embedding_model_id):
+                rule_vec = embedder.embed_query(rule)
+    else:
+        embedder = get_embedding_function(embedding_model_id)
+        with _model_lock(embedding_model_id):
+            rule_vec = embedder.embed_query(rule)
     terms_by_id = {term.get("id"): term for term in terms}
 
     scored = []
@@ -432,7 +446,7 @@ def rank_terms(payload):
         return {"candidates": [], "method": "none", "message": "Provide a rule and an ontology."}
 
     embedding_model_id = _normalise_embedding_model_id(
-        payload, payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
+        payload, payload.get("embedding_model") or "system.ai.qwen3-embedding-0-6b",
     )
     ontology_hash = payload.get("ontology_hash", "")
     disabled_message = _semantic_settings_error(payload, embedding_model_id)

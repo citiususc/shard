@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — SHACL co-construction</title>
-    <link rel="stylesheet" href="styles.css?v=30">
+    <link rel="stylesheet" href="styles.css?v=60">
   </head>
   <body class="landing-page">
     <header class="topbar">
@@ -32,7 +32,7 @@
             <h2 class="hero-title">Turn business knowledge into reviewable SHACL shapes.</h2>
             <p class="lead">
               Generate SHACL validation shapes from an OWL ontology and its business rules.
-              Work one rule at a time, or translate a full application guide into a queue of
+              Work one rule at a time, or translate a structured Business Rules template into a queue of
               shapes you can inspect, edit, validate and export.
             </p>
             <div class="hero-stats" aria-label="Shared workflow capabilities">
@@ -82,10 +82,10 @@ ex:TrackShape a sh:NodeShape ;
             <span class="card-arrow" aria-hidden="true">→</span>
             <p class="step">Workflow 2</p>
             <h2>Guide → Shapes</h2>
-            <p>Upload the full application guide (HTML or PDF). The multi-agent pipeline
-               generates every shape and streams them in for review one by one.</p>
+            <p>Upload a validated Business Rules template (.html or .md). The pipeline
+               indexes the extracted rules and streams generated shapes for review.</p>
             <ul class="card-list">
-              <li>Guide parsing and chunking</li>
+              <li>Template validation and rule indexing</li>
               <li>Shape queue with validation status</li>
               <li>Export accepted Turtle shapes</li>
             </ul>
@@ -94,6 +94,6 @@ ex:TrackShape a sh:NodeShape ;
       </section>
     </main>
 
-    <script src="common.js?v=18"></script>
+    <script src="common.js?v=27"></script>
   </body>
 </html>

@@ -136,6 +136,44 @@ def _gather_evidence(
     return state
 
 
+def _extract_business_rule_context(rag_text: str) -> str:
+    """Return the first business-rule chunk retrieved for a generated shape."""
+    text = (rag_text or "").strip()
+    if not text:
+        return ""
+
+    chunks = [c.strip() for c in text.split("BUSINESS RULE TEMPLATE ENTRY") if c.strip()]
+    chunk = chunks[0] if chunks else text
+    lines = [line.rstrip() for line in chunk.splitlines()]
+
+    number = ""
+    title = ""
+    business_lines: List[str] = []
+    in_business_rule = False
+
+    for line in lines:
+        stripped = line.strip()
+        lower = stripped.lower()
+        if lower.startswith("rule number:"):
+            number = stripped.split(":", 1)[1].strip()
+            continue
+        if lower.startswith("rule title:"):
+            title = stripped.split(":", 1)[1].strip()
+            continue
+        if lower == "business rule:":
+            in_business_rule = True
+            continue
+        if in_business_rule:
+            business_lines.append(line)
+
+    business_rule = "\n".join(business_lines).strip()
+    if business_rule:
+        heading = " — ".join(part for part in (number, title) if part)
+        return f"{heading}\n\n{business_rule}".strip() if heading else business_rule
+
+    return chunk[:2000]
+
+
 def _generate_shape(state: _AgentState, gen_model, prompt_file: str, base_ns: str):
     """
     Generation step with emit-on-failure semantics.
@@ -264,9 +302,11 @@ def stream_shacl_generation(
                 prop, ontology_graph, astrea_graph, retriever, eval_model,
                 prompt_file, property_shapes, prefixes, shacl_history, node_shapes,
             )
+            business_rule_context = _extract_business_rule_context(state.get("rag", ""))
             result = _generate_shape(state, gen_model, prompt_file, base_ns)
         except Exception as e:  # never let one property kill the stream
             logger.error(f"[stream] property {prop} crashed: {e}")
+            business_rule_context = ""
             result = {"status": "invalid", "shape": "", "error": f"pipeline error: {e}",
                       "attempts": 0, "property_name": None, "affected_classes": []}
 
@@ -289,6 +329,7 @@ def stream_shacl_generation(
             "shape": result["shape"],
             "error": result["error"],
             "attempts": result["attempts"],
+            "business_rule": business_rule_context,
         }
 
         gc.collect()

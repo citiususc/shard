@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — Rule → Shape</title>
-    <link rel="stylesheet" href="styles.css?v=30">
+    <link rel="stylesheet" href="styles.css?v=60">
   </head>
   <body class="app-page rule-page">
     <header class="topbar">
@@ -42,8 +42,8 @@
         <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
 
         <div class="session-actions" aria-label="Session import and export">
-          <button id="export-session" class="secondary-button" type="button">Export session</button>
           <button id="import-session" class="secondary-button" type="button">Import session</button>
+          <button id="export-session" class="secondary-button" type="button">Export session</button>
           <input id="session-file" class="file-input" type="file" accept=".json,application/json">
         </div>
         <p class="microcopy">Session export excludes tokens and workspace URLs.</p>
@@ -51,22 +51,24 @@
         <label class="field-label" for="base-namespace">Base namespace</label>
         <input id="base-namespace" class="input" type="text" placeholder="Derived from the ontology">
 
-        <section class="inline-panel">
+        <section class="inline-panel model-panel">
           <h2>Models</h2>
           <label class="field-label">Inference backend</label>
           <div class="switcher provider-switch" role="group" aria-label="Inference backend">
             <button class="switch-button active" data-provider="databricks">Databricks</button>
             <button class="switch-button" data-provider="huggingface">HuggingFace</button>
           </div>
-          <div class="provider-config" data-provider-config="databricks">
-            <label class="field-label" for="databricks-base-url">Databricks base URL</label>
-            <input id="databricks-base-url" class="input" type="url" placeholder="https://<workspace>/mlflow/v1">
-            <label class="field-label" for="databricks-token">Databricks token</label>
-            <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
-          </div>
-          <div class="provider-config" data-provider-config="huggingface" hidden>
-            <label class="field-label" for="hf-token">Hugging Face token</label>
-            <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+          <div class="provider-config-stack">
+            <div class="provider-config is-active" data-provider-config="databricks">
+              <label class="field-label" for="databricks-base-url">Databricks base URL</label>
+              <input id="databricks-base-url" class="input" type="url" placeholder="https://<workspace>/mlflow/v1">
+              <label class="field-label" for="databricks-token">Databricks token</label>
+              <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
+            </div>
+            <div class="provider-config is-inactive" data-provider-config="huggingface" aria-hidden="true">
+              <label class="field-label" for="hf-token">Hugging Face token</label>
+              <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+            </div>
           </div>
           <label class="field-label" for="temperature">Temperature</label>
           <input id="temperature" class="input" type="number" min="0" max="2" step="0.05">
@@ -86,7 +88,7 @@
 
       <section class="canvas">
         <div class="focus-layout">
-          <!-- ── Column 2: context + rule + search + target ── -->
+          <!-- ── Column 2: context + validation profile + rule + search ── -->
           <div class="evidence-column">
             <section class="section-block generation-context-block">
               <div class="section-title"><h2>Generation context</h2></div>
@@ -94,6 +96,20 @@
               <textarea id="domain-context" class="textarea compact" placeholder="Background about the domain the ontology models (e.g. records, units, naming conventions, lifecycle states)."></textarea>
               <label class="field-label" for="generation-guidance">SHACL generation guidance</label>
               <textarea id="generation-guidance" class="textarea compact" placeholder="Hints on how to generate the shapes (e.g. always add sh:message, prefer sh:pattern for codes, keep cardinalities strict)."></textarea>
+            </section>
+
+            <section class="section-block shape-profile-block">
+              <div class="section-title">
+                <h2>Shape validation profile</h2>
+                <button id="clear-shape-profile" class="text-button" type="button">Clear</button>
+              </div>
+              <p class="microcopy">Optional SHACL files used to validate generated SHACL shapes.</p>
+              <label class="file-drop profile-file-drop" for="shape-profile-files">
+                <span>Upload profile files</span>
+                <small>.ttl, .rdf, .owl, .nt · multiple</small>
+              </label>
+              <input id="shape-profile-files" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt" multiple>
+              <div id="shape-profile-list" class="profile-file-list" aria-live="polite"></div>
             </section>
 
             <section class="section-block business-rule-block">
@@ -185,7 +201,7 @@
       <pre class="logs-content" id="logs-content">No logs yet. Generate a shape to see the pipeline output here.</pre>
     </section>
 
-    <script src="common.js?v=18"></script>
-    <script src="rule.js?v=14"></script>
+    <script src="common.js?v=27"></script>
+    <script src="rule.js?v=15"></script>
   </body>
 </html>

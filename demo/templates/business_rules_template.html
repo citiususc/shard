@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Business Rules</title>
+  <!--
+    br2shacl-ui — Business rules template (HTML)
+
+    How to use:
+      1. Optionally fill in the metadata block (.metadata).
+      2. Add one <section class="rule"> per business rule (copy the block as
+         many times as needed). Keep the class names and data-field labels.
+      3. The business rule text may span multiple sentences or paragraphs.
+      4. Do NOT rename the classes (metadata, rule, number, title,
+         business-rule): the parser relies on them.
+
+    Structure (must match the Markdown template):
+      - .metadata:  optional ontology / author / date / description
+      - .rule (repeatable): number, title, business-rule
+  -->
+</head>
+<body>
+
+  <header class="metadata">
+    <h1>Business Rules</h1>
+    <dl>
+      <dt>Ontology</dt><dd class="ontology"></dd>
+      <dt>Author</dt><dd class="author"></dd>
+      <dt>Date</dt><dd class="date"></dd>
+      <dt>Description</dt><dd class="description"></dd>
+    </dl>
+  </header>
+
+  <main>
+
+    <section class="rule">
+      <p class="number"><strong>Number:</strong> </p>
+      <p class="title"><strong>Title:</strong> </p>
+      <div class="business-rule">
+        <p></p>
+      </div>
+    </section>
+
+    <section class="rule">
+      <p class="number"><strong>Number:</strong> </p>
+      <p class="title"><strong>Title:</strong> </p>
+      <div class="business-rule">
+        <p></p>
+      </div>
+    </section>
+
+    <section class="rule">
+      <p class="number"><strong>Number:</strong> </p>
+      <p class="title"><strong>Title:</strong> </p>
+      <div class="business-rule">
+        <p></p>
+      </div>
+    </section>
+
+  </main>
+
+</body>
+</html>

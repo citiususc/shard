@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — Guide → Shapes</title>
-    <link rel="stylesheet" href="styles.css?v=30">
+    <link rel="stylesheet" href="styles.css?v=60">
   </head>
   <body class="app-page guide-page">
     <header class="topbar">
@@ -40,8 +40,8 @@
         <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
 
         <div class="session-actions" aria-label="Session import and export">
-          <button id="export-session" class="secondary-button" type="button">Export session</button>
           <button id="import-session" class="secondary-button" type="button">Import session</button>
+          <button id="export-session" class="secondary-button" type="button">Export session</button>
           <input id="session-file" class="file-input" type="file" accept=".json,application/json">
         </div>
         <p class="microcopy">Session export excludes tokens and workspace URLs.</p>
@@ -49,22 +49,24 @@
         <label class="field-label" for="base-namespace">Base namespace</label>
         <input id="base-namespace" class="input" type="text" placeholder="Derived from the ontology">
 
-        <section class="inline-panel">
+        <section class="inline-panel model-panel">
           <h2>Models</h2>
           <label class="field-label">Inference backend</label>
           <div class="switcher provider-switch" role="group" aria-label="Inference backend">
             <button class="switch-button active" data-provider="databricks">Databricks</button>
             <button class="switch-button" data-provider="huggingface">HuggingFace</button>
           </div>
-          <div class="provider-config" data-provider-config="databricks">
-            <label class="field-label" for="databricks-base-url">Databricks base URL</label>
-            <input id="databricks-base-url" class="input" type="url" placeholder="https://<workspace>/mlflow/v1">
-            <label class="field-label" for="databricks-token">Databricks token</label>
-            <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
-          </div>
-          <div class="provider-config" data-provider-config="huggingface" hidden>
-            <label class="field-label" for="hf-token">Hugging Face token</label>
-            <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+          <div class="provider-config-stack">
+            <div class="provider-config is-active" data-provider-config="databricks">
+              <label class="field-label" for="databricks-base-url">Databricks base URL</label>
+              <input id="databricks-base-url" class="input" type="url" placeholder="https://<workspace>/mlflow/v1">
+              <label class="field-label" for="databricks-token">Databricks token</label>
+              <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
+            </div>
+            <div class="provider-config is-inactive" data-provider-config="huggingface" aria-hidden="true">
+              <label class="field-label" for="hf-token">Hugging Face token</label>
+              <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+            </div>
           </div>
           <label class="field-label" for="temperature">Temperature</label>
           <input id="temperature" class="input" type="number" min="0" max="2" step="0.05">
@@ -89,34 +91,76 @@
       <section class="canvas">
         <div class="focus-layout">
           <div class="evidence-column">
-            <section class="section-block">
-              <div class="section-title"><h2>Application guide</h2></div>
-              <label class="file-drop" for="guide-file">
-                <span>Upload guide</span>
-                <small>.html, .pdf</small>
-              </label>
-              <input id="guide-file" class="file-input" type="file" accept=".html,.htm,.pdf">
-              <p id="guide-summary" class="microcopy">No guide loaded.</p>
-
-              <label class="field-label" for="html-version">HTML version</label>
-              <select id="html-version" class="input">
-                <option value="3.2.1">3.2.1 (native HTML)</option>
-                <option value="1.6.1">1.6.1 (from PDF)</option>
-              </select>
-
-              <button id="generate-guide" class="primary-button full-width">Generate all SHACL shapes</button>
+            <section class="section-block generation-context-block">
+              <div class="section-title"><h2>Generation context</h2></div>
+              <label class="field-label" for="domain-context">Domain context</label>
+              <textarea id="domain-context" class="textarea compact" placeholder="Background about the domain the ontology models (e.g. records, units, naming conventions, lifecycle states)."></textarea>
+              <label class="field-label" for="generation-guidance">SHACL generation guidance</label>
+              <textarea id="generation-guidance" class="textarea compact" placeholder="Hints on how to generate the shapes (e.g. always add sh:message, prefer sh:pattern for codes, keep cardinalities strict)."></textarea>
             </section>
 
-            <section class="section-block">
+            <section class="section-block shape-profile-block">
               <div class="section-title">
-                <h2>Progress</h2>
-                <span id="progress-tag" class="tag">0 / 0 SHACL shapes generated</span>
+                <h2>Shape validation profile</h2>
+                <button id="clear-shape-profile" class="text-button" type="button">Clear</button>
               </div>
-              <div class="progress-track"><div id="progress-bar" class="progress-fill"></div></div>
-              <p id="progress-status" class="microcopy">Idle.</p>
+              <p class="microcopy">Optional SHACL files used to validate generated SHACL shapes.</p>
+              <label class="file-drop profile-file-drop" for="shape-profile-files">
+                <span>Upload profile files</span>
+                <small>.ttl, .rdf, .owl, .nt · multiple</small>
+              </label>
+              <input id="shape-profile-files" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt" multiple>
+              <div id="shape-profile-list" class="profile-file-list" aria-live="polite"></div>
             </section>
 
-            <section class="section-block">
+            <section class="section-block guide-template-block">
+              <div class="section-title"><h2>Business rules template</h2></div>
+              <label class="file-drop" for="guide-file">
+                <span>Upload business rules</span>
+                <small>.html, .md · template format only</small>
+              </label>
+              <input id="guide-file" class="file-input" type="file" accept=".html,.htm,.md,.markdown">
+              <p id="guide-summary" class="microcopy">No business rules template loaded.</p>
+
+              <div class="template-help">
+                <p>
+                  Uploaded files must follow the Business Rules template structure:
+                  one <code>Rule</code> block per business rule, with
+                  <code>Number</code>, <code>Title</code> and <code>Business rule</code>.
+                  Metadata is optional.
+                </p>
+                <div class="template-links" aria-label="Business rules templates">
+                  <span>Download templates:</span>
+                  <a href="templates/business_rules_template.html" download>HTML</a>
+                  <a href="templates/business_rules_template.md" download>Markdown</a>
+                </div>
+              </div>
+
+              <button id="generate-guide" class="primary-button full-width" disabled>Generate all SHACL shapes</button>
+            </section>
+
+            <section class="section-block generated-shapes-block">
+              <div class="section-title">
+                <h2>Generated shapes</h2>
+                <span id="queue-count" class="tag">0 shapes</span>
+              </div>
+              <div class="guide-progress">
+                <div class="section-title compact-title">
+                  <h3>Progress</h3>
+                  <span id="progress-tag" class="tag">0 / 0 SHACL shapes generated</span>
+                </div>
+                <div class="progress-track"><div id="progress-bar" class="progress-fill"></div></div>
+                <p id="progress-status" class="microcopy">No generation running.</p>
+              </div>
+              <div class="generation-controls" aria-label="Generation controls">
+                <button id="cancel-generation" class="secondary-button danger-button" type="button" aria-label="Cancel generation" disabled>Cancel</button>
+              </div>
+              <div id="queue-list" class="queue-list"></div>
+            </section>
+          </div>
+
+          <div class="editor-column">
+            <section class="section-block prefixes-block">
               <div class="section-title">
                 <h2>Prefixes in scope</h2>
                 <button id="reset-prefixes" class="text-button">Reset</button>
@@ -126,15 +170,13 @@
                 <textarea id="prefixes-editor" class="code-editor" spellcheck="false" wrap="off" style="min-height:150px"></textarea>
               </div>
             </section>
-          </div>
 
-          <div class="editor-column">
-            <section class="section-block">
+            <section class="section-block current-business-rule-block">
               <div class="section-title">
-                <h2>Generated shapes</h2>
-                <span id="queue-count" class="tag">0 shapes</span>
+                <h2>Business Rule</h2>
+                <span id="current-rule-tag" class="tag">—</span>
               </div>
-              <div id="queue-list" class="queue-list"></div>
+              <textarea id="current-business-rule" class="textarea compact" readonly placeholder="Select a generated shape to see the related business rule."></textarea>
             </section>
 
             <section class="section-block">
@@ -150,13 +192,16 @@
                 <button id="validate-shape" class="secondary-button">Check</button>
                 <button id="accept-shape" class="primary-button">Accept</button>
               </div>
-              <div id="validation-panel" class="validation-panel">Upload a guide and generate shapes to start reviewing.</div>
+              <div id="validation-panel" class="validation-panel">Upload a valid business rules template and generate shapes to start reviewing.</div>
             </section>
 
             <section class="section-block">
               <div class="section-title">
                 <h2>Accepted shapes</h2>
-                <span id="coverage-tag" class="tag">0 accepted</span>
+                <div class="section-actions">
+                  <button id="accept-all-shapes" class="secondary-button accept-all-button" type="button" disabled>Accept all</button>
+                  <span id="coverage-tag" class="tag">0 accepted</span>
+                </div>
               </div>
               <div id="accepted-list" class="accepted-list"></div>
               <button id="export-shapes" class="primary-button full-width">Export accepted shapes (.ttl)</button>
@@ -166,7 +211,7 @@
       </section>
     </main>
 
-    <script src="common.js?v=18"></script>
-    <script src="guide.js?v=13"></script>
+    <script src="common.js?v=27"></script>
+    <script src="guide.js?v=21"></script>
   </body>
 </html>

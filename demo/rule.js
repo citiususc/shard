@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireReset("reset-demo");
   wireSessionControls();
   wireModelControls();
+  wireShapeValidationProfileControls();
   wireExport("export-shapes", () => "");
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
 
@@ -213,6 +214,7 @@ async function generateShape() {
         ontology_content: o.content, base_namespace: o.baseNamespace,
         domain_context: byId("domain-context").value.trim(),
         generation_guidance: byId("generation-guidance").value.trim(),
+        validation_profiles: getShapeValidationProfiles(),
         model: m.llmModel, provider: m.provider, temperature: m.temperature,
         inference_config: getInferenceConfig(),
       }),
@@ -229,6 +231,9 @@ async function generateShape() {
     } else if (data.error_type === "backend") {
       panel.className = "validation-panel backend error";
       panel.textContent = `Model/backend error — generation did not produce a shape:\n${data.error || data.message}`;
+    } else if (data.error_type === "profile") {
+      panel.className = "validation-panel shape-error";
+      panel.textContent = validationResultMessage(data);
     } else {
       panel.className = "validation-panel shape-error";
       panel.textContent = `Shape/Turtle error — the backend ran, but the generated shape is invalid:\nReturned after ${data.attempts} attempts.\n${data.error || data.message}`;
@@ -256,10 +261,10 @@ async function checkShape() {
   panel.textContent = "Checking…";
   try {
     const data = await validateTurtle(shape, (o && o.prefixes) || "");
-    if (data.valid) { panel.className = "validation-panel ok"; panel.textContent = "Valid Turtle / SHACL."; }
+    if (data.valid) { panel.className = "validation-panel ok"; panel.textContent = validationResultMessage(data); }
     else {
       panel.className = "validation-panel shape-error";
-      panel.textContent = `Shape/Turtle parse error:\n${data.error}`;
+      panel.textContent = validationResultMessage(data);
     }
   } catch (e) {
     panel.className = "validation-panel backend error";
@@ -275,7 +280,7 @@ async function acceptCurrent() {
   if (!data.valid) {
     const panel = byId("validation-panel");
     panel.className = "validation-panel shape-error";
-    panel.textContent = `Cannot accept invalid Turtle/SHACL:\n${data.error}`;
+    panel.textContent = `Cannot accept invalid generated shape:\n${validationResultMessage(data)}`;
     return;
   }
   acceptShape(selectedEntity ? selectedEntity.iri : "(shape)", shape);

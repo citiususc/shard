@@ -11,9 +11,9 @@ MODEL MAPPING
 -------------
 Role            Local model                         Databricks endpoint
 ────────────────────────────────────────────────────────────────────────
-Text / Chat     meta-llama/Llama-3.3-70B-Instruct  databricks-qwen3-next-80b-a3b-instruct
-Vision          OpenGVLab/InternVL3_5-38B          databricks-gemini-3-5-flash
-Embeddings      BAAI/bge-large-en-v1.5             databricks-qwen3-embedding-0-6b
+Text / Chat     meta-llama/Llama-3.3-70B-Instruct  system.ai.gemma-3-12b
+Vision          OpenGVLab/InternVL3_5-38B          system.ai.gemma-3-12b
+Embeddings      BAAI/bge-large-en-v1.5             system.ai.qwen3-embedding-0-6b
 
 CONFIGURATION
 -------------
@@ -58,44 +58,28 @@ from runtime_config import get_databricks_base_url, get_databricks_token
 # ---------------------------------------------------------------------------
 # Default endpoint names
 # ---------------------------------------------------------------------------
-DEFAULT_LLM_MODEL_ID = "databricks-qwen3-next-80b-a3b-instruct"
-DEFAULT_TEXT_MODEL_ID = "databricks-qwen3-next-80b-a3b-instruct"
-DEFAULT_VISION_MODEL_ID = "databricks-gemini-3-5-flash"
-DEFAULT_EMBEDDING_MODEL_ID = "databricks-qwen3-embedding-0-6b"
+DEFAULT_LLM_MODEL_ID = "system.ai.gemma-3-12b"
+DEFAULT_TEXT_MODEL_ID = "system.ai.gemma-3-12b"
+DEFAULT_VISION_MODEL_ID = "system.ai.gemma-3-12b"
+DEFAULT_EMBEDDING_MODEL_ID = "system.ai.qwen3-embedding-0-6b"
 DEFAULT_TEMPERATURE = 0.50
-
-# Aliases kept for backward compatibility with earlier builds/saved sessions
-# that stored shortened local names. The Databricks Serving API payload receives
-# the actual endpoint name deployed in the workspace.
-DATABRICKS_MODEL_ALIASES = {
-    "databricks-qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
-    "databricks-qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
-    "databricks-gemma_3_12b": "databricks-gemma-3-12b",
-    "qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
-    "qwen3-next-80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
-    "gpt-oss-120b": "databricks-gpt-oss-120b",
-    "claude-sonnet-5": "databricks-claude-sonnet-5",
-    "claude-opus-4-8": "databricks-claude-opus-4-8",
-    "gemini-3-5-flash": "databricks-gemini-3-5-flash",
-    "meta-llama-3-3-70b-instruct": "databricks-meta-llama-3-3-70b-instruct",
-    "qwen35-122b-a10b": "databricks-qwen35-122b-a10b",
-    "gpt-oss-20b": "databricks-gpt-oss-20b",
-    "meta-llama-3-1-8b-instruct": "databricks-meta-llama-3-1-8b-instruct",
-    "gemma_3_12b": "databricks-gemma-3-12b",
-    "gemma-3-12b": "databricks-gemma-3-12b",
-    "llama-4-maverick": "databricks-llama-4-maverick",
-    "qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
-    "qwen3-embedding-0-6b": "databricks-qwen3-embedding-0-6b",
-    "bge_large_en": "databricks-bge-large-en",
-    "bge-large-en": "databricks-bge-large-en",
-    "gte_large_en": "databricks-gte-large-en",
-    "gte-large-en": "databricks-gte-large-en",
-}
 
 
 def normalize_model_id(model_id: str) -> str:
+    """Return the AI Gateway model id expected by Databricks.
+
+    The UI intentionally shows short names such as ``gemma-3-12b``. The
+    Databricks OpenAI-compatible AI Gateway expects ``system.ai.gemma-3-12b``.
+    Legacy ``databricks-*`` names are also accepted and converted.
+    """
     clean = str(model_id or "").strip()
-    return DATABRICKS_MODEL_ALIASES.get(clean, clean)
+    if not clean or "/" in clean:
+        return clean
+    if clean.startswith("system.ai."):
+        return clean
+    if clean.startswith("databricks-") and clean != "databricks-genie":
+        clean = clean[len("databricks-"):]
+    return f"system.ai.{clean}"
 
 # Token budgets
 TEXT_MAX_NEW_TOKENS = int(os.environ.get("RAG_TEXT_MAX_NEW_TOKENS", "800"))

@@ -29,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
 from rdflib import Graph
+from rdflib.util import guess_format
 from langchain_core.output_parsers import StrOutputParser
 from ontology_io import ontology_base_namespace, parse_ontology_graph
 from service_http import new_request_id, read_json, send_health, send_json, send_options
@@ -40,6 +41,148 @@ MAX_RETRIES = 10
 
 def _runtime_config(payload):
     return payload.get("inference_config") or payload.get("model_config") or payload
+
+
+def _rdf_format(filename):
+    guessed = guess_format(filename or "") if filename else None
+    return guessed or "turtle"
+
+
+def _validation_profiles(payload):
+    profiles = payload.get("validation_profiles") or payload.get("shape_validation_profiles") or []
+    if not isinstance(profiles, list):
+        return []
+    out = []
+    for idx, item in enumerate(profiles):
+        if isinstance(item, str):
+            content = item
+            name = f"profile-{idx + 1}.ttl"
+        elif isinstance(item, dict):
+            content = item.get("content") or ""
+            name = item.get("name") or item.get("filename") or f"profile-{idx + 1}.ttl"
+        else:
+            continue
+        if content.strip():
+            out.append({"name": name, "content": content})
+    return out
+
+
+def validate_shape_content(shape, prefixes="", profiles=None):
+    """Validate generated SHACL as Turtle, then optionally against SHACL profiles."""
+    profiles = profiles or []
+    profile_names = [p["name"] for p in profiles]
+    profile_count = len(profiles)
+    full_shape = f"{prefixes or ''}\n{shape or ''}"
+
+    try:
+        data_graph = Graph(bind_namespaces="none")
+        data_graph.parse(data=full_shape, format="turtle")
+    except Exception as exc:
+        return {
+            "valid": False,
+            "syntax_valid": False,
+            "profile_valid": None,
+            "profile_count": profile_count,
+            "profile_names": profile_names,
+            "error": str(exc),
+            "error_type": "parse",
+            "message": "Generated shape is not valid Turtle.",
+        }
+
+    if not profiles:
+        return {
+            "valid": True,
+            "syntax_valid": True,
+            "profile_valid": None,
+            "profile_count": 0,
+            "profile_names": [],
+            "error": None,
+            "error_type": "none",
+            "message": "Valid Turtle / SHACL. No shape validation profile loaded.",
+        }
+
+    try:
+        from pyshacl import validate as pyshacl_validate
+    except Exception as exc:
+        return {
+            "valid": False,
+            "syntax_valid": True,
+            "profile_valid": False,
+            "profile_count": profile_count,
+            "profile_names": profile_names,
+            "error": f"pyshacl is required for shape validation profiles: {exc}",
+            "error_type": "profile",
+            "message": "Shape validation profile could not run because pyshacl is not installed.",
+        }
+
+    shapes_graph = Graph(bind_namespaces="none")
+    try:
+        for profile in profiles:
+            shapes_graph.parse(
+                data=profile["content"],
+                format=_rdf_format(profile["name"]),
+                publicID=profile["name"],
+            )
+    except Exception as exc:
+        return {
+            "valid": False,
+            "syntax_valid": True,
+            "profile_valid": False,
+            "profile_count": profile_count,
+            "profile_names": profile_names,
+            "error": str(exc),
+            "error_type": "profile",
+            "message": "One of the shape validation profile files could not be parsed.",
+        }
+
+    try:
+        conforms, _report_graph, report_text = pyshacl_validate(
+            data_graph=data_graph,
+            shacl_graph=shapes_graph,
+            inference="rdfs",
+            abort_on_first=False,
+            allow_infos=True,
+            allow_warnings=True,
+            meta_shacl=False,
+            advanced=True,
+        )
+    except Exception as exc:
+        return {
+            "valid": False,
+            "syntax_valid": True,
+            "profile_valid": False,
+            "profile_count": profile_count,
+            "profile_names": profile_names,
+            "error": str(exc),
+            "error_type": "profile",
+            "message": "Shape validation profile execution failed.",
+        }
+
+    report_text = str(report_text or "").strip()
+    if conforms:
+        return {
+            "valid": True,
+            "syntax_valid": True,
+            "profile_valid": True,
+            "profile_count": profile_count,
+            "profile_names": profile_names,
+            "error": None,
+            "error_type": "none",
+            "report_text": report_text,
+            "message": f"Valid Turtle / SHACL. Shape profile OK ({profile_count} file{'s' if profile_count != 1 else ''}).",
+        }
+
+    return {
+        "valid": False,
+        "syntax_valid": True,
+        "profile_valid": False,
+        "profile_count": profile_count,
+        "profile_names": profile_names,
+        "error": report_text[:5000] if report_text else "Shape validation profile reported non-conformance.",
+        "report_text": report_text[:5000],
+        "error_type": "profile",
+        "message": "Generated shape does not conform to the loaded shape validation profile.",
+    }
 
 
 def _build_ontology_info(ontology_content, target):
@@ -110,7 +253,7 @@ def build_shape(payload):
     prefixes = payload.get("prefixes") or ""
     ontology_content = payload.get("ontology_content", "")
     temperature = float(payload.get("temperature", 0.5))
-    model_id = payload.get("model") or "databricks-qwen3-next-80b-a3b-instruct"
+    model_id = payload.get("model") or "system.ai.gemma-3-12b"
 
     base_ns = payload.get("base_namespace") or ""
     if not base_ns and ontology_content:
@@ -166,19 +309,30 @@ def build_shape(payload):
                     "hints": [], "fallback": False, "not_found": True,
                     "message": "The model reported no shape can be justified from this rule and context."}
 
-        try:
-            Graph(bind_namespaces="none").parse(data=f"{prefixes}\n{last_result}", format="turtle")
-        except Exception as e:
+        validation = validate_shape_content(last_result, prefixes, [])
+        if not validation.get("syntax_valid"):
+            e = validation.get("error")
             logger.warn(f"[build] parse failed on attempt {attempt + 1}: {e}")
             error_message = str(e)
             attempt += 1
             continue
 
+        validation = validate_shape_content(last_result, prefixes, _validation_profiles(payload))
+        if not validation.get("valid"):
+            logger.info(f"[build] generated shape failed validation profile on attempt {attempt + 1}")
+            hints = _hints_from_shape(last_result, prefixes)
+            return {"shape": last_result, "attempts": attempt + 1, "hints": hints,
+                    "fallback": False, **validation}
+
         logger.info(f"[build] valid SHACL on attempt {attempt + 1}")
         hints = _hints_from_shape(last_result, prefixes)
         return {"shape": last_result, "valid": True, "error": None, "attempts": attempt + 1,
                 "hints": hints, "fallback": False, "error_type": "none",
-                "message": f"Valid SHACL generated by '{model_id}' (attempt {attempt + 1})."}
+                "syntax_valid": True,
+                "profile_valid": validation.get("profile_valid"),
+                "profile_count": validation.get("profile_count", 0),
+                "profile_names": validation.get("profile_names", []),
+                "message": validation.get("message") if validation.get("profile_count") else f"Valid SHACL generated by '{model_id}' (attempt {attempt + 1})."}
 
     # Retries exhausted: return the invalid shape with the parse error.
     logger.error(f"[build] exhausted {MAX_RETRIES} attempts; last parse error: {error_message}")
@@ -283,11 +437,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/validate-shape":
             shape = payload.get("shape", "")
             prefixes = payload.get("prefixes", "")
-            try:
-                Graph(bind_namespaces="none").parse(data=f"{prefixes}\n{shape}", format="turtle")
-                self._send_json(200, {"valid": True, "error": None})
-            except Exception as exc:
-                self._send_json(200, {"valid": False, "error": str(exc)})
+            self._send_json(200, validate_shape_content(shape, prefixes, _validation_profiles(payload)))
             return
 
         if self.path == "/validate-model":

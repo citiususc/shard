@@ -22,27 +22,25 @@ const SERVICES = {
 const MODEL_CATALOG = {
   databricks: {
     chat: [
-      "databricks-qwen3-next-80b-a3b-instruct",
-      "databricks-gpt-oss-120b",
-      "databricks-claude-sonnet-5",
-      "databricks-claude-opus-4-8",
-      "databricks-gemini-3-5-flash",
-      "databricks-meta-llama-3-3-70b-instruct",
-      "databricks-qwen35-122b-a10b",
-      "databricks-gpt-oss-20b",
-      "databricks-meta-llama-3-1-8b-instruct",
-      "databricks-gemma-3-12b",
-      "databricks-llama-4-maverick",
+      "gemma-3-12b",
+      "qwen35-122b-a10b",
+      "gpt-oss-20b",
+      "gpt-oss-120b",
+      "glm-5-2",
+      "meta-llama-3-1-8b-instruct",
+      "qwen3-next-80b-a3b-instruct",
+      "meta-llama-3-3-70b-instruct",
+      "llama-4-maverick",
+      "databricks-genie",
     ],
     vision: [
-      "databricks-gemini-3-5-flash",
-      "databricks-gemma-3-12b",
-      "databricks-llama-4-maverick",
+      "gemma-3-12b",
+      "llama-4-maverick",
     ],
     embedding: [
-      "databricks-qwen3-embedding-0-6b",
-      "databricks-bge-large-en",
-      "databricks-gte-large-en",
+      "gte-large-en",
+      "bge-large-en",
+      "qwen3-embedding-0-6b",
     ],
   },
   huggingface: {
@@ -65,6 +63,7 @@ const STORE = {
   ontology: "t2s.ontology",   // {filename, content, baseNamespace, prefixes, entities}
   models:   "t2s.models",     // provider + credentials + selected/default/custom models
   accepted: "t2s.accepted",   // [{id, property, shape}]
+  shapeProfiles: "t2s.shapeProfiles", // [{id, name, size, content}]
 };
 
 /* ---------- tiny helpers ---------- */
@@ -132,8 +131,12 @@ async function fetchStream(url, options = {}, meta = {}) {
   const timeoutMs = meta.timeoutMs || 30000;
   const label = meta.label || "Streaming request";
   const requestId = meta.requestId || makeRequestId();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const controller = meta.controller || new AbortController();
+  let timedOut = false;
+  const timer = timeoutMs ? setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs) : null;
   try {
     const headers = {
       "Content-Type": "application/json",
@@ -153,8 +156,15 @@ async function fetchStream(url, options = {}, meta = {}) {
     }
     return res;
   } catch (err) {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     if (err.name === "AbortError") {
+      if (!timedOut) {
+        const cancelErr = new Error(`${label} cancelled (request ${requestId})`);
+        cancelErr.name = "AbortError";
+        cancelErr.cancelled = true;
+        cancelErr.requestId = requestId;
+        throw cancelErr;
+      }
       throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s (request ${requestId})`);
     }
     throw err;
@@ -221,31 +231,6 @@ function refreshHighlight(taId) {
 const DEFAULT_PROVIDER = "databricks";
 const DEFAULT_TEMPERATURE = 0.5;
 
-const DATABRICKS_MODEL_ALIASES = {
-  "databricks-qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
-  "databricks-qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
-  "databricks-gemma_3_12b": "databricks-gemma-3-12b",
-  "qwen3-next80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
-  "qwen3-next-80b-a3b-instruct": "databricks-qwen3-next-80b-a3b-instruct",
-  "gpt-oss-120b": "databricks-gpt-oss-120b",
-  "claude-sonnet-5": "databricks-claude-sonnet-5",
-  "claude-opus-4-8": "databricks-claude-opus-4-8",
-  "gemini-3-5-flash": "databricks-gemini-3-5-flash",
-  "meta-llama-3-3-70b-instruct": "databricks-meta-llama-3-3-70b-instruct",
-  "qwen35-122b-a10b": "databricks-qwen35-122b-a10b",
-  "gpt-oss-20b": "databricks-gpt-oss-20b",
-  "meta-llama-3-1-8b-instruct": "databricks-meta-llama-3-1-8b-instruct",
-  "gemma_3_12b": "databricks-gemma-3-12b",
-  "gemma-3-12b": "databricks-gemma-3-12b",
-  "llama-4-maverick": "databricks-llama-4-maverick",
-  "qwen3_embedding_0_6b": "databricks-qwen3-embedding-0-6b",
-  "qwen3-embedding-0-6b": "databricks-qwen3-embedding-0-6b",
-  "bge_large_en": "databricks-bge-large-en",
-  "bge-large-en": "databricks-bge-large-en",
-  "gte_large_en": "databricks-gte-large-en",
-  "gte-large-en": "databricks-gte-large-en",
-};
-
 const MODEL_ROLE_CATALOG = {
   llmModel: "chat",
   textModel: "chat",
@@ -292,8 +277,13 @@ function clampTemperature(value) {
 }
 
 function normalizeModelId(provider, modelId) {
-  const id = String(modelId || "").trim();
-  if (provider === "databricks") return DATABRICKS_MODEL_ALIASES[id] || id;
+  let id = String(modelId || "").trim();
+  if (provider === "databricks") {
+    if (id.startsWith("system.ai.")) id = id.slice("system.ai.".length);
+    if (id.startsWith("databricks-") && id !== "databricks-genie") {
+      id = id.slice("databricks-".length);
+    }
+  }
   return id;
 }
 
@@ -322,15 +312,12 @@ function defaultModelSelection(provider) {
   };
 }
 
-function catalogOptions(provider, catalogRole, customModels, selected) {
+function catalogOptions(provider, catalogRole, customModels) {
   const defaults = (MODEL_CATALOG[provider] && MODEL_CATALOG[provider][catalogRole]) || [];
   const custom = customModels && customModels[provider] && customModels[provider][catalogRole]
     ? customModels[provider][catalogRole]
     : [];
-  const options = uniqueList([...defaults, ...custom]);
-  const normalizedSelected = normalizeModelId(provider, selected);
-  if (normalizedSelected && !options.includes(normalizedSelected)) options.push(normalizedSelected);
-  return options;
+  return uniqueList([...defaults, ...custom]);
 }
 
 function getModels() {
@@ -340,7 +327,7 @@ function getModels() {
   const pick = (key) => {
     const catalogRole = MODEL_ROLE_CATALOG[key];
     const storedValue = normalizeModelId(provider, stored && stored[key]);
-    const defaults = catalogOptions(provider, catalogRole, customModels, storedValue);
+    const defaults = catalogOptions(provider, catalogRole, customModels);
     return defaults.includes(storedValue) ? storedValue : defaults[0];
   };
   return {
@@ -534,13 +521,19 @@ function wireModelControls() {
     document.querySelectorAll("[data-provider]").forEach((b) =>
       b.classList.toggle("active", b.dataset.provider === provider));
     document.querySelectorAll("[data-provider-config]").forEach((el) => {
-      el.hidden = el.dataset.providerConfig !== provider;
+      const active = el.dataset.providerConfig === provider;
+      el.classList.toggle("is-active", active);
+      el.classList.toggle("is-inactive", !active);
+      el.setAttribute("aria-hidden", active ? "false" : "true");
+      el.querySelectorAll("input, select, textarea, button").forEach((control) => {
+        control.disabled = !active;
+      });
     });
 
     MODEL_ROLE_SELECTS.forEach((row) => {
       fillSelect(
         byId(row.selectId),
-        catalogOptions(provider, row.catalogRole, fresh.customModels, fresh[row.key]),
+        catalogOptions(provider, row.catalogRole, fresh.customModels),
         fresh[row.key],
       );
     });
@@ -1025,15 +1018,24 @@ async function wireOntologyControls(onLoaded) {
 /* ---------- accepted shapes (shared across pages) ---------- */
 function getAccepted() { return loadJSON(STORE.accepted, []); }
 function setAccepted(list) { saveJSON(STORE.accepted, list); }
+function notifyAcceptedShapesChanged(detail = {}) {
+  window.dispatchEvent(new CustomEvent("accepted-shapes-changed", {
+    detail: { accepted: getAccepted(), ...detail },
+  }));
+}
 
 function acceptShape(property, shape) {
   const list = getAccepted();
   const id = "shp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
   list.push({ id, property: property || "(shape)", shape });
   setAccepted(list);
+  notifyAcceptedShapesChanged({ action: "accept", id });
   return id;
 }
-function removeAccepted(id) { setAccepted(getAccepted().filter((s) => s.id !== id)); }
+function removeAccepted(id) {
+  setAccepted(getAccepted().filter((s) => s.id !== id));
+  notifyAcceptedShapesChanged({ action: "remove", id });
+}
 
 function renderAccepted(listEl, countEl) {
   const list = getAccepted();
@@ -1050,6 +1052,103 @@ function renderAccepted(listEl, countEl) {
     row.appendChild(del);
     listEl.appendChild(row);
   });
+}
+
+/* ---------- generated-shape validation profiles ---------- */
+function getShapeValidationProfiles() { return loadJSON(STORE.shapeProfiles, []); }
+function setShapeValidationProfiles(list) { saveJSON(STORE.shapeProfiles, Array.isArray(list) ? list : []); }
+function removeShapeValidationProfile(id) {
+  const next = getShapeValidationProfiles().filter((profile) => (profile.id || profile.name) !== id);
+  setShapeValidationProfiles(next);
+  renderShapeValidationProfiles();
+  setStatus("Shape validation profile file removed");
+}
+
+function shapeProfileSummary() {
+  const profiles = getShapeValidationProfiles();
+  if (!profiles.length) return "Syntax only · no shape validation profile loaded.";
+  return `${profiles.length} profile file${profiles.length === 1 ? "" : "s"}: ${profiles.map((p) => p.name).join(", ")}`;
+}
+
+function renderShapeValidationProfiles() {
+  const listEl = byId("shape-profile-list");
+  const clearBtn = byId("clear-shape-profile");
+  if (!listEl) return;
+  const profiles = getShapeValidationProfiles();
+  if (clearBtn) clearBtn.disabled = profiles.length === 0;
+  if (!profiles.length) {
+    listEl.innerHTML = `<p class="microcopy">No validation profile loaded. Only syntax checks will run.</p>`;
+    return;
+  }
+  listEl.innerHTML = "";
+  profiles.forEach((profile) => {
+    const row = document.createElement("div");
+    row.className = "profile-file-item";
+    row.title = profile.name;
+    const size = profile.size || String(profile.content || "").length;
+    const id = profile.id || profile.name;
+    row.innerHTML =
+      `<code>${esc(profile.name)}</code>` +
+      `<span>${Math.max(1, Math.round(size / 1024))} KB</span>` +
+      `<button class="profile-file-remove" type="button" title="Remove">×</button>`;
+    const removeBtn = row.querySelector(".profile-file-remove");
+    removeBtn.setAttribute("aria-label", `Remove ${profile.name}`);
+    removeBtn.addEventListener("click", () => removeShapeValidationProfile(id));
+    listEl.appendChild(row);
+  });
+}
+
+function wireShapeValidationProfileControls() {
+  const input = byId("shape-profile-files");
+  const clearBtn = byId("clear-shape-profile");
+  renderShapeValidationProfiles();
+  if (input) {
+    input.addEventListener("change", async (ev) => {
+      const files = Array.from(ev.target.files || []);
+      if (!files.length) return;
+      try {
+        const incoming = await Promise.all(files.map(async (file) => ({
+          id: `${file.name}-${file.size}-${file.lastModified}`,
+          name: file.name,
+          size: file.size,
+          content: await file.text(),
+          loadedAt: new Date().toISOString(),
+        })));
+        const existing = getShapeValidationProfiles();
+        const byKey = new Map(existing.map((profile) => [profile.id || profile.name, profile]));
+        incoming.forEach((profile) => byKey.set(profile.id || profile.name, profile));
+        setShapeValidationProfiles(Array.from(byKey.values()));
+        renderShapeValidationProfiles();
+        setStatus(`Loaded ${incoming.length} shape validation profile file(s)`);
+      } catch (e) {
+        setStatus(`Could not load validation profile: ${e.message}`);
+      } finally {
+        input.value = "";
+      }
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      setShapeValidationProfiles([]);
+      renderShapeValidationProfiles();
+      setStatus("Shape validation profile cleared");
+    });
+  }
+}
+
+function validationResultMessage(data) {
+  const profileCount = Number(data.profile_count || 0);
+  if (data.valid) {
+    return profileCount
+      ? `Valid Turtle / SHACL. Shape profile OK (${profileCount} file${profileCount === 1 ? "" : "s"}).`
+      : "Valid Turtle / SHACL. No shape validation profile loaded.";
+  }
+  if (data.syntax_valid === false) return `Shape/Turtle parse error:\n${data.error}`;
+  if (data.profile_valid === false) {
+    const report = data.report_text || data.error || "";
+    return `Shape validation profile failed (${profileCount} file${profileCount === 1 ? "" : "s"}):\n${report}`;
+  }
+  return `Shape/Turtle validation error:\n${data.error || data.message || "Unknown validation error"}`;
 }
 
 /* ---------- export ---------- */
@@ -1133,6 +1232,7 @@ function wireSessionControls() {
       exportedAt: new Date().toISOString(),
       ontology: getOntology(),
       accepted: getAccepted(),
+      shapeValidationProfiles: getShapeValidationProfiles(),
       models: sanitizedModelsForExport(),
     };
     try {
@@ -1164,6 +1264,9 @@ function wireSessionControls() {
         const payload = JSON.parse(await file.text());
         if (payload.ontology) setOntology(payload.ontology);
         if (Array.isArray(payload.accepted)) setAccepted(payload.accepted);
+        if (Array.isArray(payload.shapeValidationProfiles)) {
+          setShapeValidationProfiles(payload.shapeValidationProfiles);
+        }
         if (payload.models) {
           const current = getModels();
           saveJSON(STORE.models, mergeModels(current, {
@@ -1196,8 +1299,12 @@ async function copyToClipboard(text) {
 async function validateTurtle(shape, prefixes) {
   return fetchJSON(SERVICES.validate, {
     method: "POST",
-    body: JSON.stringify({ shape, prefixes }),
-  }, { label: "Validate Turtle", timeoutMs: 15000 }); // {valid, error}
+    body: JSON.stringify({
+      shape,
+      prefixes,
+      validation_profiles: getShapeValidationProfiles(),
+    }),
+  }, { label: "Validate Turtle", timeoutMs: 30000 }); // {valid, error}
 }
 
 /* ---------- reset ---------- */
@@ -1217,6 +1324,7 @@ function wireReset(buttonId) {
     }
     localStorage.removeItem(STORE.ontology);
     localStorage.removeItem(STORE.accepted);
+    localStorage.removeItem(STORE.shapeProfiles);
     location.reload();
   });
 }

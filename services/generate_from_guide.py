@@ -2,15 +2,16 @@
 """
 generate-from-guide service  (br2shacl-ui)  — Mode B (full guide)
 
-Runs the full text2shacl pipeline on an uploaded guide and streams the result
-shape-by-shape over Server-Sent-Events, so the human-in-the-loop review queue
-fills up while generation continues.
+Runs the full text2shacl pipeline on an uploaded Business Rules template
+(.html or .md) and streams the result shape-by-shape over Server-Sent-Events,
+so the human-in-the-loop review queue fills up while generation continues.
 
 Pipeline (self-contained-lite, all inference via model_loader / Databricks):
   1. parse the ontology
-  2. preprocess + index the guide in memory (rag_inmemory.build_inmemory_retriever)
+  2. validate + parse the Business Rules template
+  3. index the extracted business rules in memory
      — emits {"type":"status",...} progress events
-  3. stream generation (multiagent_stream.stream_shacl_generation)
+  4. stream generation (multiagent_stream.stream_shacl_generation)
      — emits {"type":"start"} then one {"type":"shape"} per property,
        including invalid ones (10 failed attempts) with the parse error,
        then {"type":"done"} with the aggregated node shapes.
@@ -18,22 +19,22 @@ Pipeline (self-contained-lite, all inference via model_loader / Databricks):
 Transport: the client POSTs a JSON body and reads the streaming response with
 fetch()+ReadableStream (not EventSource, which is GET-only), parsing on "\n\n".
 
-Endpoint:  POST http://127.0.0.1:9103/generate-from-guide
-  request : {ontology_content, guide_content, guide_filename, html_version,
+Endpoint: POST http://127.0.0.1:9103/generate-from-guide
+  request : {ontology_content, guide_content, guide_filename,
              llm_model, text_model, vision_model, embedding_model, temperature,
              provider, inference_config?, prefixes?, base_namespace?}
 """
 
-import base64
 import json
 import os
 import sys
-import tempfile
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from html import escape
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
+from business_rules import parse_business_rules_document
 from ontology_io import ontology_base_namespace, ontology_prefix_block, parse_ontology_graph
 from service_http import new_request_id, read_json, send_health, send_json, send_options
 
@@ -45,69 +46,72 @@ def _runtime_config(payload):
     return payload.get("inference_config") or payload.get("model_config") or payload
 
 
-def _materialize_guide(guide_content, guide_filename, is_base64):
-    """Write the uploaded guide to a temp file the preprocessors can read.
-
-    HTML is used as-is. PDF is best-effort converted to a minimal HTML wrapper
-    (text only) so the v1.6.1 (from-PDF) preprocessor can chunk it.
-    Returns (path, html_version_hint).
-    """
-    suffix = os.path.splitext(guide_filename or "")[1].lower()
-    if is_base64:
-        raw = base64.b64decode(guide_content)
-    else:
-        raw = guide_content.encode("utf-8")
-
-    if suffix == ".pdf":
-        text = _pdf_to_text(raw)
-        html = "<html><body>" + "".join(f"<p>{_esc(line)}</p>"
-                                         for line in text.splitlines() if line.strip()) + "</body></html>"
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            suffix=".html",
-            prefix="br2shacl_guide_",
-            delete=False,
-        ) as f:
-            f.write(html)
-            return f.name, "1.6.1"
-
-    # HTML (or anything else treated as HTML)
-    with tempfile.NamedTemporaryFile(
-        mode="wb",
-        suffix=suffix or ".html",
-        prefix="br2shacl_guide_",
-        delete=False,
-    ) as f:
-        f.write(raw)
-        return f.name, None
+def parse_business_rules_template(content: str, filename: str):
+    """Parse a Business Rules template, preserving the legacy service shape."""
+    doc = parse_business_rules_document(content, filename=filename or "")
+    if not doc.rules:
+        raise ValueError("The template is valid, but no business rule entries were found.")
+    return {
+        "format": "markdown" if doc.source_format == "md" else doc.source_format,
+        "metadata": doc.metadata,
+        "filename": filename or doc.filename or "business_rules_template",
+        "rules": [
+            {
+                "number": rule.number,
+                "title": rule.title,
+                "business_rule": rule.text,
+                "source_format": rule.source_format,
+                "raw": rule.raw,
+            }
+            for rule in doc.rules
+        ],
+    }
 
 
-def _esc(s):
-    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+def business_rule_chunks(parsed: dict, domain_context: str = "", generation_guidance: str = ""):
+    meta = parsed.get("metadata") or {}
+    domain_context = (domain_context or "").strip()
+    generation_guidance = (generation_guidance or "").strip()
+    chunks = []
+    for rule in parsed.get("rules") or []:
+        lines = [
+            "BUSINESS RULE TEMPLATE ENTRY",
+            f"Ontology: {meta.get('ontology', '')}",
+        ]
+        if domain_context:
+            lines.extend(["Domain context:", domain_context])
+        if generation_guidance:
+            lines.extend(["SHACL generation guidance:", generation_guidance])
+        lines.extend([
+            f"Rule number: {rule.get('number', '')}",
+            f"Rule title: {rule.get('title', '')}",
+            "Business rule:",
+            rule.get("business_rule", ""),
+        ])
+        chunks.append("\n".join(lines).strip())
+    return chunks
 
 
-def _pdf_to_text(raw):
-    path = None
-    try:
-        from pdfminer.high_level import extract_text
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            suffix=".pdf",
-            prefix="br2shacl_pdf_",
-            delete=False,
-        ) as f:
-            f.write(raw)
-            path = f.name
-        return extract_text(path)
-    except Exception as e:
-        return f"[PDF extraction unavailable: {e}]"
-    finally:
-        if path:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+def business_rules_preview_html(parsed: dict):
+    """Small normalized HTML representation for logs/debugging and future reuse."""
+    meta = parsed.get("metadata") or {}
+    rules_html = []
+    for rule in parsed.get("rules") or []:
+        body = "".join(f"<p>{escape(p.strip())}</p>" for p in rule.get("business_rule", "").split("\n\n") if p.strip())
+        rules_html.append(
+            f"<section class=\"rule\"><h2>{escape(rule.get('number', ''))}: {escape(rule.get('title', ''))}</h2>{body}</section>"
+        )
+    return (
+        "<!doctype html><html><body><header class=\"metadata\">"
+        "<h1>Business Rules</h1>"
+        f"<p>Ontology: {escape(meta.get('ontology', ''))}</p>"
+        f"<p>Author: {escape(meta.get('author', ''))}</p>"
+        f"<p>Date: {escape(meta.get('date', ''))}</p>"
+        f"<p>Description: {escape(meta.get('description', ''))}</p>"
+        "</header><main>"
+        + "\n".join(rules_html)
+        + "</main></body></html>"
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -149,6 +153,16 @@ class Handler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": "Missing ontology_content."}, request_id=self.request_id)
             return
         try:
+            parsed_guide = parse_business_rules_template(
+                payload.get("guide_content", ""),
+                payload.get("guide_filename", ""),
+            )
+            payload["_business_rules"] = parsed_guide
+            payload["_business_rules_html"] = business_rules_preview_html(parsed_guide)
+        except Exception as exc:
+            send_json(self, 400, {"error": str(exc)}, request_id=self.request_id)
+            return
+        try:
             parse_ontology_graph(
                 payload.get("ontology_content", ""),
                 payload.get("ontology_filename", "ontology.ttl"),
@@ -175,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                        "trace": traceback.format_exc()[-1500:]})
 
     def _run(self, payload):
-        from rag_inmemory import build_inmemory_retriever
+        from rag_inmemory import build_inmemory_retriever_from_texts
         from multiagent_stream import stream_shacl_generation
 
         ontology_content = payload.get("ontology_content", "")
@@ -188,51 +202,41 @@ class Handler(BaseHTTPRequestHandler):
         base_ns = payload.get("base_namespace") or ontology_base_namespace(onto)
         prefixes = payload.get("prefixes") or ontology_prefix_block(onto, base_ns)
 
-        # --- Preprocess + index the guide ---------------------------------- #
-        guide_path = None
-        try:
-            guide_path, version_hint = _materialize_guide(
-                payload.get("guide_content", ""),
-                payload.get("guide_filename", ""),
-                payload.get("guide_is_base64", False),
-            )
-            html_version = version_hint or payload.get("html_version", "3.2.1")
+        parsed_guide = payload.get("_business_rules") or parse_business_rules_template(
+            payload.get("guide_content", ""),
+            payload.get("guide_filename", ""),
+        )
+        chunks = business_rule_chunks(
+            parsed_guide,
+            domain_context=payload.get("domain_context", ""),
+            generation_guidance=payload.get("generation_guidance", ""),
+        )
+        self._sse({"type": "status", "stage": "template",
+                   "current": len(chunks), "total": len(chunks),
+                   "message": f"Validated Business Rules template: {len(chunks)} rule(s)."})
 
-            def progress(stage, current, total):
-                self._sse({"type": "status", "stage": f"summarizing:{stage}",
-                           "current": current, "total": total,
-                           "message": f"Summarizing {stage} {current}/{total}…"})
+        self._sse({"type": "status", "stage": "preprocessing",
+                   "current": 0, "total": len(chunks),
+                   "message": "Indexing business rules…"})
+        retriever = build_inmemory_retriever_from_texts(
+            texts=chunks,
+            embedding_model_id=payload.get("embedding_model") or "system.ai.qwen3-embedding-0-6b",
+        )
+        self._sse({"type": "status", "stage": "preprocessing",
+                   "current": len(chunks), "total": len(chunks),
+                   "message": f"Indexed {len(chunks)} business rule(s)."})
 
-            self._sse({"type": "status", "stage": "preprocessing",
-                       "message": f"Preprocessing guide (v{html_version})…"})
-
-            retriever = build_inmemory_retriever(
-                file=guide_path,
-                html_version=html_version,
-                text_model_id=payload.get("text_model") or "databricks-qwen3-next-80b-a3b-instruct",
-                vision_model_id=payload.get("vision_model") or "databricks-gemini-3-5-flash",
-                embedding_model_id=payload.get("embedding_model") or "databricks-qwen3-embedding-0-6b",
-                temperature=float(payload.get("temperature", 0.5)),
-                progress=progress,
-            )
-
-            # --- Stream generation ----------------------------------------- #
-            for event in stream_shacl_generation(
-                ontology_graph=onto,
-                retriever=retriever,
-                llm_model_id=payload.get("llm_model") or "databricks-qwen3-next-80b-a3b-instruct",
-                temperature=float(payload.get("temperature", 0.5)),
-                astrea_graph=None,
-                base_namespace=base_ns,
-                prefix_block=prefixes,
-            ):
-                self._sse(event)
-        finally:
-            if guide_path:
-                try:
-                    os.remove(guide_path)
-                except OSError:
-                    pass
+        # --- Stream generation --------------------------------------------- #
+        for event in stream_shacl_generation(
+            ontology_graph=onto,
+            retriever=retriever,
+            llm_model_id=payload.get("llm_model") or "system.ai.gemma-3-12b",
+            temperature=float(payload.get("temperature", 0.5)),
+            astrea_graph=None,
+            base_namespace=base_ns,
+            prefix_block=prefixes,
+        ):
+            self._sse(event)
 
 
 if __name__ == "__main__":

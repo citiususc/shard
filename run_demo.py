@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Start the text2shacl demo UI and the four local backend services together.
+"""Start the text2shacl demo UI and the local backend services together.
 
   parse-ontology        :9100
   find-relevant-terms   :9101
   build-shacl-shape     :9102   (+ /validate-shape)
   generate-from-guide   :9103   (SSE)
+  rule-target-resolver  :9104   (read-only inspection)
   web app (static)      :8768   → demo/
 
 Inference credentials, model ids and temperature are configured from the UI.
@@ -30,6 +31,7 @@ PROCESSES = [
     ("find-relevant-terms", [PYTHON, "services/find_relevant_terms.py"]),
     ("build-shacl-shape",   [PYTHON, "services/build_shacl_shapes.py"]),
     ("generate-from-guide", [PYTHON, "services/generate_from_guide.py"]),
+    ("rule-target-resolver", [PYTHON, "services/rule_target_resolver.py"]),
 ]
 
 
@@ -82,7 +84,7 @@ def main():
     print(f"\nDemo:    http://{WEB_HOST}:{WEB_PORT}/index.html")
     print(f"  Rule → Shape:   http://{WEB_HOST}:{WEB_PORT}/rule.html")
     print(f"  Guide → Shapes: http://{WEB_HOST}:{WEB_PORT}/guide.html")
-    print("\nServices: :9100 parse · :9101 terms · :9102 build/validate · :9103 guide (SSE)")
+    print("\nServices: :9100 parse · :9101 terms · :9102 build/validate · :9103 guide (SSE) · :9104 rule targets")
     print("\nPress Ctrl+C to stop everything.")
 
     while True:

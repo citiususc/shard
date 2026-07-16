@@ -247,3 +247,37 @@ def build_inmemory_retriever(
 
     logger.info("[rag_inmemory] In-memory retriever ready.")
     return retriever
+
+
+def build_inmemory_retriever_from_texts(
+    texts: List[str],
+    embedding_model_id: str,
+    collection_prefix: str = "br2shacl-rules",
+) -> MultiVectorRetriever:
+    """Build a lightweight in-memory retriever from already-structured text chunks.
+
+    Business-rules templates are already concise, structured input. Running the
+    full HTML/table/image summarization pipeline on them would add latency and
+    could blur the rule wording, so this helper indexes each rule directly.
+    """
+    clean_texts = [str(t).strip() for t in texts if str(t or "").strip()]
+    if not clean_texts:
+        raise ValueError("No business rule text chunks were found in the uploaded template.")
+
+    vectorstore = Chroma(
+        collection_name=f"{collection_prefix}-{uuid.uuid4().hex[:8]}",
+        embedding_function=get_embedding_function(embedding_model_id),
+    )
+    docstore = InMemoryStore()
+    retriever = MultiVectorRetriever(vectorstore=vectorstore, docstore=docstore, id_key=ID_KEY)
+
+    docs, kv = [], []
+    for text in clean_texts:
+        did = f"rule-{uuid.uuid4().hex}"
+        docs.append(Document(page_content=text, metadata={ID_KEY: did}))
+        kv.append((did, text))
+
+    retriever.vectorstore.add_documents(docs)
+    retriever.docstore.mset(kv)
+    logger.info(f"[rag_inmemory] Business-rules retriever ready with {len(clean_texts)} rule chunk(s).")
+    return retriever
