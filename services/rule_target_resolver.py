@@ -25,7 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from business_rules import BusinessRule, parse_business_rules
 from Logger import logger
-from service_http import new_request_id, read_json, send_health, send_json, send_options
+from service_http import (
+    new_request_id,
+    read_json,
+    reject_disabled_provider,
+    send_health,
+    send_json,
+    send_options,
+)
 from parse_ontology import parse_ontology
 
 HOST = "127.0.0.1"
@@ -34,7 +41,9 @@ PORT = 9104
 DEFAULT_TOP_K = 10
 DEFAULT_LABEL_THRESHOLD = 0.68
 DEFAULT_STRONG_LABEL_THRESHOLD = 0.86
-DEFAULT_SEMANTIC_THRESHOLD = 0.74
+DEFAULT_SEMANTIC_THRESHOLD = 0.60
+DEFAULT_SEMANTIC_TARGET_MARGIN = 0.16
+DEFAULT_SEMANTIC_MAX_TARGETS = 4
 
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "can", "each", "every",
@@ -295,15 +304,80 @@ def _targets_from_candidates(
     threshold: float,
     *,
     max_targets: int = 8,
+    score_margin: float = 0.22,
 ) -> List[str]:
     if not candidates:
         return []
     best = candidates[0]["score"]
-    floor = max(threshold, best - 0.22)
+    floor = max(threshold, best - score_margin)
     targets = []
     for candidate in candidates:
         if candidate["score"] < floor:
             continue
+        target = str(candidate.get("target") or "")
+        if target and target not in targets:
+            targets.append(target)
+        if len(targets) >= max_targets:
+            break
+    return targets
+
+
+def _normalise_target_ref(value: Any) -> str:
+    value = str(value or "").strip()
+    if not value or value == "—":
+        return ""
+    return value
+
+
+def _candidate_refs(candidate: Dict[str, Any]) -> set[str]:
+    refs = set()
+    for key in ("target", "full_iri", "label"):
+        ref = _normalise_target_ref(candidate.get(key))
+        if ref:
+            refs.add(ref)
+    return refs
+
+
+def _ref_matches_candidate(ref: Any, candidate: Dict[str, Any]) -> bool:
+    ref = _normalise_target_ref(ref)
+    return bool(ref and ref in _candidate_refs(candidate))
+
+
+def _candidates_domain_range_related(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    if a.get("type") == "property" and b.get("type") == "class":
+        return _ref_matches_candidate(a.get("domain"), b) or _ref_matches_candidate(a.get("range"), b)
+    if b.get("type") == "property" and a.get("type") == "class":
+        return _ref_matches_candidate(b.get("domain"), a) or _ref_matches_candidate(b.get("range"), a)
+    return False
+
+
+def _semantic_targets_from_candidates(
+    candidates: List[Dict[str, Any]],
+    threshold: float,
+    *,
+    max_targets: int = DEFAULT_SEMANTIC_MAX_TARGETS,
+    score_margin: float = DEFAULT_SEMANTIC_TARGET_MARGIN,
+) -> List[str]:
+    if not candidates:
+        return []
+    primary = candidates[0]
+    best = float(primary.get("score", 0))
+    if best < threshold:
+        return []
+
+    floor = max(threshold, best - score_margin)
+    targets = []
+    primary_target = str(primary.get("target") or "")
+    if primary_target:
+        targets.append(primary_target)
+
+    for candidate in candidates[1:]:
+        score = float(candidate.get("score", 0))
+        if score < floor:
+            continue
+        if not _candidates_domain_range_related(primary, candidate):
+            continue
+
         target = str(candidate.get("target") or "")
         if target and target not in targets:
             targets.append(target)
@@ -509,6 +583,8 @@ def resolve_rule_target(
     label_threshold: float = DEFAULT_LABEL_THRESHOLD,
     strong_label_threshold: float = DEFAULT_STRONG_LABEL_THRESHOLD,
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    semantic_target_margin: float = DEFAULT_SEMANTIC_TARGET_MARGIN,
+    semantic_max_targets: int = DEFAULT_SEMANTIC_MAX_TARGETS,
     top_k: int = DEFAULT_TOP_K,
 ) -> RuleResolution:
     """Resolve one business rule to ontology term targets using auditable signals."""
@@ -537,7 +613,12 @@ def resolve_rule_target(
 
     semantic_hits = _semantic_candidates(rule, ontology_terms, semantic_payload or {}, top_k, semantic_ranker=semantic_ranker)
     if semantic_hits and semantic_hits[0]["score"] >= semantic_threshold:
-        targets = _targets_from_candidates(semantic_hits, semantic_threshold)
+        targets = _semantic_targets_from_candidates(
+            semantic_hits,
+            semantic_threshold,
+            max_targets=semantic_max_targets,
+            score_margin=semantic_target_margin,
+        )
         return RuleResolution(
             rule_number=rule.number,
             targets=targets,
@@ -640,6 +721,8 @@ def resolve_template(
     label_threshold = float(payload.get("label_threshold", DEFAULT_LABEL_THRESHOLD))
     strong_label_threshold = float(payload.get("strong_label_threshold", DEFAULT_STRONG_LABEL_THRESHOLD))
     semantic_threshold = float(payload.get("semantic_threshold", DEFAULT_SEMANTIC_THRESHOLD))
+    semantic_target_margin = float(payload.get("semantic_target_margin", DEFAULT_SEMANTIC_TARGET_MARGIN))
+    semantic_max_targets = max(1, min(20, int(payload.get("semantic_max_targets", DEFAULT_SEMANTIC_MAX_TARGETS))))
     semantic_payload = {
         **payload,
         "ontology_terms": ontology_terms,
@@ -659,6 +742,8 @@ def resolve_template(
             label_threshold=label_threshold,
             strong_label_threshold=strong_label_threshold,
             semantic_threshold=semantic_threshold,
+            semantic_target_margin=semantic_target_margin,
+            semantic_max_targets=semantic_max_targets,
             top_k=top_k,
         )
         summary[resolution.resolved_by] = summary.get(resolution.resolved_by, 0) + 1
@@ -709,6 +794,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = read_json(self)
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
+            return
+        if reject_disabled_provider(self, payload, request_id=self.request_id):
             return
         from runtime_config import inference_config
         with logger.request_context(self.request_id), inference_config(_runtime_config(payload)):

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — Rule → Shape</title>
-    <link rel="stylesheet" href="styles.css?v=60">
+    <link rel="stylesheet" href="styles.css?v=74">
   </head>
   <body class="app-page rule-page">
     <header class="topbar">
@@ -18,10 +18,11 @@
         </div>
       </div>
       <nav class="topnav">
-        <a class="navlink" href="index.html">Home</a>
         <a class="navlink active" href="rule.html">Rule → Shape</a>
         <a class="navlink" href="guide.html">Guide → Shapes</a>
-        <button class="logs-button" id="logs-toggle" type="button">Logs</button>
+        <button class="logs-button" id="logs-toggle" type="button">
+          <span>Logs</span><span class="logs-count" id="logs-count" hidden>0</span>
+        </button>
         <span class="status-pill" id="status-pill">Ready</span>
       </nav>
     </header>
@@ -48,15 +49,37 @@
         </div>
         <p class="microcopy">Session export excludes tokens and workspace URLs.</p>
 
-        <label class="field-label" for="base-namespace">Base namespace</label>
-        <input id="base-namespace" class="input" type="text" placeholder="Derived from the ontology">
+        <div class="namespace-label-row">
+          <label class="field-label" for="base-namespace">Primary ontology namespace</label>
+          <span class="namespace-source namespace-source-none" id="namespace-source">Not detected</span>
+        </div>
+        <input id="base-namespace" class="input" type="text" list="namespace-candidates" autocomplete="off" placeholder="Detected from ontology terms">
+        <datalist id="namespace-candidates"></datalist>
+        <p class="microcopy namespace-summary" id="namespace-summary">No primary ontology namespace detected.</p>
+        <div class="namespace-label-row shape-namespace-row">
+          <label class="field-label" for="shape-namespace">Generated shapes namespace</label>
+          <span class="namespace-source namespace-source-none" id="shape-namespace-source">Not detected</span>
+        </div>
+        <input id="shape-namespace" class="input" type="text" autocomplete="off" placeholder="Derived from the primary namespace">
+        <div class="namespace-label-row shape-prefix-row">
+          <label class="field-label" for="shape-prefix">Preferred shape prefix</label>
+          <span class="namespace-source namespace-source-default" id="shape-prefix-source">Default</span>
+        </div>
+        <input id="shape-prefix" class="input prefix-name-input" type="text" list="shape-prefix-candidates" autocomplete="off" placeholder="shape">
+        <datalist id="shape-prefix-candidates"></datalist>
 
         <section class="inline-panel model-panel">
           <h2>Models</h2>
           <label class="field-label">Inference backend</label>
           <div class="switcher provider-switch" role="group" aria-label="Inference backend">
-            <button class="switch-button active" data-provider="databricks">Databricks</button>
-            <button class="switch-button" data-provider="huggingface">HuggingFace</button>
+            <button class="switch-button active" data-provider="databricks">
+              <span>Databricks</span>
+              <small>Remote inference</small>
+            </button>
+            <button class="switch-button" data-provider="huggingface">
+              <span>Hugging Face</span>
+              <small>Local inference</small>
+            </button>
           </div>
           <div class="provider-config-stack">
             <div class="provider-config is-active" data-provider-config="databricks">
@@ -66,23 +89,29 @@
               <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
             </div>
             <div class="provider-config is-inactive" data-provider-config="huggingface" aria-hidden="true">
-              <label class="field-label" for="hf-token">Hugging Face token</label>
-              <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+              <div data-hf-local-config>
+                <label class="field-label" for="hf-token">Hugging Face token</label>
+                <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
+              </div>
+              <div class="provider-unavailable-notice" data-hf-public-notice hidden>
+                <p data-provider-disabled-message>Local Hugging Face inference is not available in this hosted version.</p>
+                <a href="https://github.com/citiususc/br2shacl-ui" target="_blank" rel="noopener noreferrer">citiususc/br2shacl-ui</a>
+              </div>
             </div>
           </div>
-          <label class="field-label" for="temperature">Temperature</label>
-          <input id="temperature" class="input" type="number" min="0" max="2" step="0.05">
-          <label class="field-label" for="llm-model">Generation LLM (chat)</label>
-          <select id="llm-model" class="input"></select>
-          <label class="field-label" for="embedding-model">Embedding model (term ranking)</label>
-          <select id="embedding-model" class="input"></select>
-          <label class="field-label" for="custom-model-id">Add custom model</label>
-          <div class="custom-model-row">
+          <label class="field-label" for="temperature" data-inference-setting>Temperature</label>
+          <input id="temperature" class="input" type="number" min="0" max="2" step="0.05" data-inference-setting>
+          <label class="field-label" for="llm-model" data-inference-setting>Generation LLM (chat)</label>
+          <select id="llm-model" class="input" data-inference-setting></select>
+          <label class="field-label" for="embedding-model" data-inference-setting>Embedding model (term ranking)</label>
+          <select id="embedding-model" class="input" data-inference-setting></select>
+          <label class="field-label" for="custom-model-id" data-inference-setting>Add custom model</label>
+          <div class="custom-model-row" data-inference-setting>
             <select id="custom-model-role" class="input" aria-label="Custom model role"></select>
             <input id="custom-model-id" class="input" type="text" placeholder="endpoint or org/model">
             <button id="add-custom-model" class="secondary-button" type="button">Add</button>
           </div>
-          <p id="model-config-status" class="microcopy">Configure credentials and models here.</p>
+          <p id="model-config-status" class="microcopy" data-inference-setting>Configure credentials and models here.</p>
         </section>
       </aside>
 
@@ -99,17 +128,42 @@
             </section>
 
             <section class="section-block shape-profile-block">
-              <div class="section-title">
-                <h2>Shape validation profile</h2>
-                <button id="clear-shape-profile" class="text-button" type="button">Clear</button>
+              <div class="shape-support-grid">
+                <div class="shape-support-pane validation-profile-pane">
+                  <div class="section-title">
+                    <h2>Shape validation</h2>
+                    <button id="clear-shape-profile" class="text-button shape-support-clear" type="button" title="Clear validation profiles" aria-label="Clear validation profiles">×</button>
+                  </div>
+                  <label class="file-drop profile-file-drop" for="shape-profile-files">
+                    <span>Upload profiles</span>
+                    <small>.ttl, .rdf, .owl, .nt · multiple</small>
+                  </label>
+                  <input id="shape-profile-files" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt" multiple>
+                  <div id="shape-profile-list" class="profile-file-list" aria-live="polite"></div>
+                </div>
+
+                <div class="shape-support-pane astrea-baseline-pane">
+                  <div class="section-title">
+                    <h2>Astrea baseline</h2>
+                    <button id="clear-astrea-baseline" class="text-button shape-support-clear" type="button" title="Clear Astrea baseline" aria-label="Clear Astrea baseline">×</button>
+                  </div>
+                  <label class="file-drop profile-file-drop astrea-file-drop" for="astrea-baseline-file">
+                    <span>Upload baseline</span>
+                    <small>.ttl · single file</small>
+                  </label>
+                  <input id="astrea-baseline-file" class="file-input" type="file" accept=".ttl,text/turtle">
+                  <div id="astrea-baseline-list" class="profile-file-list astrea-baseline-list" aria-live="polite"></div>
+                </div>
+
+                <div class="astrea-merge-row">
+                  <span class="field-label">Final output merge</span>
+                  <div class="switcher astrea-merge-switch" role="group" aria-label="Astrea final output merge strategy">
+                    <button class="switch-button active" type="button" data-astrea-merge="none" title="Export only the reviewed BR2SHACL shapes">No merge</button>
+                    <button class="switch-button" type="button" data-astrea-merge="priority-llm" title="Use BR2SHACL for covered targets and Astrea as fallback">Priority LLM</button>
+                    <button class="switch-button" type="button" data-astrea-merge="restrictive" title="Keep the strongest compatible constraints from both sources">Restrictive</button>
+                  </div>
+                </div>
               </div>
-              <p class="microcopy">Optional SHACL files used to validate generated SHACL shapes.</p>
-              <label class="file-drop profile-file-drop" for="shape-profile-files">
-                <span>Upload profile files</span>
-                <small>.ttl, .rdf, .owl, .nt · multiple</small>
-              </label>
-              <input id="shape-profile-files" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt" multiple>
-              <div id="shape-profile-list" class="profile-file-list" aria-live="polite"></div>
             </section>
 
             <section class="section-block business-rule-block">
@@ -195,13 +249,24 @@
 
     <section class="logs-drawer" id="logs-drawer" aria-label="Execution logs">
       <div class="logs-drawer-bar">
-        <span>Execution logs (last generation)</span>
-        <button id="logs-close" type="button">Close</button>
+        <span id="logs-title">Execution logs</span>
+        <div class="logs-toolbar">
+          <input class="logs-search" id="logs-search" type="search" placeholder="Search logs" aria-label="Search execution logs">
+          <select class="logs-level" id="logs-level" aria-label="Filter execution logs by level">
+            <option value="all">All levels</option>
+            <option value="issues">Issues</option>
+            <option value="errors">Errors</option>
+          </select>
+          <label class="logs-autoscroll"><input id="logs-autoscroll" type="checkbox" checked>Auto-scroll</label>
+          <button id="logs-copy" type="button">Copy</button>
+          <button id="logs-clear" type="button">Clear</button>
+          <button id="logs-close" type="button">Close</button>
+        </div>
       </div>
-      <pre class="logs-content" id="logs-content">No logs yet. Generate a shape to see the pipeline output here.</pre>
+      <div class="logs-content" id="logs-content" aria-live="polite"></div>
     </section>
 
-    <script src="common.js?v=27"></script>
-    <script src="rule.js?v=15"></script>
+    <script src="common.js?v=37"></script>
+    <script src="rule.js?v=20"></script>
   </body>
 </html>

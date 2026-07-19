@@ -28,7 +28,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
-from service_http import new_request_id, read_json, send_health, send_json, send_options
+from service_http import (
+    new_request_id,
+    read_json,
+    reject_disabled_provider,
+    send_health,
+    send_json,
+    send_options,
+)
 
 HOST = "127.0.0.1"
 PORT = 9101
@@ -513,6 +520,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = read_json(self)
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
+            return
+        if reject_disabled_provider(self, payload, request_id=self.request_id):
             return
         from runtime_config import inference_config
         from Logger import logger

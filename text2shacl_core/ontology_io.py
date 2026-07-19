@@ -8,7 +8,7 @@ guessing, fallback behaviour and namespace derivation stay consistent.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 from rdflib import Graph
 
@@ -59,5 +59,30 @@ def ontology_base_namespace(graph: Graph) -> str:
     return ns_utils.derive_base_namespace(graph)
 
 
-def ontology_prefix_block(graph: Graph, base_namespace: str) -> str:
-    return ns_utils.build_prefix_block(graph, base_namespace)
+def ontology_namespace_analysis(graph: Graph) -> Dict[str, Any]:
+    return ns_utils.analyze_base_namespace(graph)
+
+
+def ontology_shapes_namespace(graph: Graph, base_namespace: str) -> Tuple[str, str]:
+    return ns_utils.derive_shapes_namespace(graph, base_namespace)
+
+
+def ontology_shape_prefix(graph: Graph, shape_namespace: str) -> Tuple[str, str]:
+    return ns_utils.derive_shape_prefix(graph, shape_namespace)
+
+
+def ontology_prefix_block(
+    graph: Graph,
+    base_namespace: str,
+    shape_namespace: Optional[str] = None,
+    shape_prefix: Optional[str] = None,
+    *,
+    include_legacy_aliases: bool = False,
+) -> str:
+    return ns_utils.build_prefix_block(
+        graph,
+        base_namespace,
+        shape_ns=shape_namespace,
+        shape_prefix=shape_prefix,
+        include_legacy_aliases=include_legacy_aliases,
+    )

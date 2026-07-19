@@ -14,6 +14,9 @@ Inference credentials, model ids and temperature are configured from the UI.
 from pathlib import Path
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import argparse
+import json
+import os
 import shutil
 import signal
 import subprocess
@@ -22,7 +25,16 @@ import threading
 import time
 
 ROOT = Path(__file__).resolve().parent
-PYTHON = shutil.which("python3") or sys.executable
+sys.path.insert(0, str(ROOT / "text2shacl_core"))
+
+from deployment_policy import (  # noqa: E402
+    DEPLOYMENT_PROFILE_ENV,
+    SUPPORTED_PROFILES,
+    capabilities,
+    normalize_deployment_profile,
+)
+
+PYTHON = sys.executable or shutil.which("python3")
 WEB_HOST = "127.0.0.1"
 WEB_PORT = 8768
 
@@ -43,6 +55,19 @@ class NoCacheHTTPRequestHandler(SimpleHTTPRequestHandler):
     serving an older version.
     """
 
+    deployment_profile = "local"
+
+    def do_GET(self):
+        if self.path.split("?", 1)[0] == "/api/capabilities":
+            body = json.dumps(capabilities(self.deployment_profile)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
+
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
@@ -50,7 +75,20 @@ class NoCacheHTTPRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def main():
+def parse_args(argv=None):
+    """Parse demo deployment options without reading user inference settings."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--deployment-profile",
+        choices=SUPPORTED_PROFILES,
+        default=normalize_deployment_profile(os.environ.get(DEPLOYMENT_PROFILE_ENV, "local")),
+        help="local enables local Hugging Face inference; public disables it (default: local)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
     children = []
     web_server = None
 
@@ -71,17 +109,21 @@ def main():
     signal.signal(signal.SIGINT, stop_all)
     signal.signal(signal.SIGTERM, stop_all)
 
+    child_env = os.environ.copy()
+    child_env[DEPLOYMENT_PROFILE_ENV] = args.deployment_profile
     for name, command in PROCESSES:
-        child = subprocess.Popen(command, cwd=ROOT, start_new_session=True)
+        child = subprocess.Popen(command, cwd=ROOT, env=child_env, start_new_session=True)
         children.append(child)
         print(f"started {name}: {' '.join(command)}")
         time.sleep(0.2)
 
+    NoCacheHTTPRequestHandler.deployment_profile = args.deployment_profile
     web_handler = partial(NoCacheHTTPRequestHandler, directory=str(ROOT / "demo"))
     web_server = ThreadingHTTPServer((WEB_HOST, WEB_PORT), web_handler)
     threading.Thread(target=web_server.serve_forever, daemon=True).start()
 
     print(f"\nDemo:    http://{WEB_HOST}:{WEB_PORT}/index.html")
+    print(f"Profile: {args.deployment_profile}")
     print(f"  Rule → Shape:   http://{WEB_HOST}:{WEB_PORT}/rule.html")
     print(f"  Guide → Shapes: http://{WEB_HOST}:{WEB_PORT}/guide.html")
     print("\nServices: :9100 parse · :9101 terms · :9102 build/validate · :9103 guide (SSE) · :9104 rule targets")

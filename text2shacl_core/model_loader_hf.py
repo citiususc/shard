@@ -115,30 +115,35 @@ def _device_map() -> str:
 # HuggingFace download helper
 # ---------------------------------------------------------------------------
 
-def _ensure_model(model_id: str) -> None:
-    """Verify model is in local HF cache; download if not."""
-    from huggingface_hub import try_to_load_from_cache, snapshot_download
-    from huggingface_hub.utils import EntryNotFoundError
+def _ensure_model(model_id: str) -> str:
+    """Return a complete local snapshot path, downloading it when necessary."""
+    from huggingface_hub import snapshot_download
 
+    ignore_patterns = [
+        "*.msgpack", "*.h5",
+        "flax_model*", "tf_model*",
+        "original/*",
+    ]
     try:
-        cached = try_to_load_from_cache(model_id, filename="config.json")
-        if cached is not None:
-            logger.debug(f"Model '{model_id}' found in HuggingFace cache.")
-            return
-    except (EntryNotFoundError, Exception):
+        snapshot_path = snapshot_download(
+            repo_id=model_id,
+            token=get_hf_token() or None,
+            ignore_patterns=ignore_patterns,
+            local_files_only=True,
+        )
+        logger.debug(f"Model '{model_id}' found in HuggingFace cache.")
+        return snapshot_path
+    except Exception:
         pass
 
     logger.info(f"Model '{model_id}' not found locally — downloading.")
-    snapshot_download(
+    snapshot_path = snapshot_download(
         repo_id=model_id,
         token=get_hf_token() or None,
-        ignore_patterns=[
-            "*.msgpack", "*.h5",
-            "flax_model*", "tf_model*",
-            "original/*",
-        ],
+        ignore_patterns=ignore_patterns,
     )
     logger.info(f"Model '{model_id}' downloaded successfully.")
+    return snapshot_path
 
 
 # ---------------------------------------------------------------------------
@@ -188,21 +193,21 @@ def _load_standard_causal_lm(model_id: str) -> Dict[str, Any]:
     """Load a standard causal LM (Llama, Mixtral, Qwen3-Next, etc.)."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    _ensure_model(model_id)
+    model_path = _ensure_model(model_id)
     hf_token = get_hf_token() or None
 
     tokenizer = AutoTokenizer.from_pretrained(
-        model_id,
+        model_path,
         trust_remote_code=True,
         token=hf_token,
-        clean_up_tokenization_spaces=False,   # ← añadir esto
+        clean_up_tokenization_spaces=False,
     )
-    
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_id,
+        model_path,
         torch_dtype=_torch_dtype(),
         device_map=_device_map(),
         trust_remote_code=True,
@@ -215,7 +220,7 @@ def _load_standard_causal_lm(model_id: str) -> Dict[str, Any]:
 def _load_gpt_oss(model_id: str) -> Dict[str, Any]:
     from transformers import pipeline as hf_pipeline, AutoTokenizer
 
-    _ensure_model(model_id)
+    model_path = _ensure_model(model_id)
     hf_token = get_hf_token() or None
 
     logger.info(
@@ -223,7 +228,7 @@ def _load_gpt_oss(model_id: str) -> Dict[str, Any]:
     )
 
     tokenizer = AutoTokenizer.from_pretrained(
-        model_id,
+        model_path,
         trust_remote_code=True,
         token=hf_token,
         clean_up_tokenization_spaces=False,
@@ -231,9 +236,10 @@ def _load_gpt_oss(model_id: str) -> Dict[str, Any]:
 
     pipe = hf_pipeline(
         "text-generation",
-        model=model_id,
-        torch_dtype="auto",      # respeta el dtype del config.json (MXFP4)
-        device_map="balanced",       # con MXFP4 cabe en una GPU
+        model=model_path,
+        tokenizer=tokenizer,
+        torch_dtype="auto",      # Preserve the MXFP4 dtype from config.json.
+        device_map="balanced",
         token=hf_token,
         trust_remote_code=True,
     )
@@ -439,7 +445,7 @@ class _LocalEmbeddings:
 
     Supports two pooling strategies detected automatically:
     - Qwen3-Embedding: last-token pooling with task-specific instruction prefix
-    - Standard BGE/E5/nomic: mean pooling via SentenceTransformer
+    - Standard sentence-embedding models: pooling via SentenceTransformer
 
     Qwen3-Embedding uses a causal LM architecture (decoder-only) where the
     embedding is the hidden state of the last token. It does NOT work correctly
@@ -449,8 +455,8 @@ class _LocalEmbeddings:
 
     # Qwen3-Embedding instruction format
     _QWEN3_EMBED_TASK = (
-        "Given a technical document about railway infrastructure ontology, "
-        "retrieve relevant passages that match the query"
+        "Given a technical document about an ontology and its domain, "
+        "retrieve relevant ontology terms that match the query"
     )
     _QWEN3_EMBED_IDS = {"Qwen/Qwen3-Embedding-0.6B", "Qwen/Qwen3-Embedding-4B", "Qwen/Qwen3-Embedding-8B"}
 
@@ -467,7 +473,7 @@ class _LocalEmbeddings:
         if self._model is not None or self._st_model is not None:
             return
 
-        _ensure_model(self.model_id)
+        model_path = _ensure_model(self.model_id)
         hf_token = get_hf_token() or None
         device   = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -478,13 +484,13 @@ class _LocalEmbeddings:
                 f"with last-token pooling."
             )
             self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_id,
+                model_path,
                 trust_remote_code=True,
                 padding_side="left",
                 token=hf_token,
             )
             self._model = AutoModel.from_pretrained(
-                self.model_id,
+                model_path,
                 torch_dtype=_torch_dtype(),
                 device_map=device,
                 trust_remote_code=True,
@@ -495,7 +501,7 @@ class _LocalEmbeddings:
         else:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading embedding model '{self.model_id}' via SentenceTransformer.")
-            self._st_model = SentenceTransformer(self.model_id, device=device)
+            self._st_model = SentenceTransformer(model_path, device=device)
             logger.info(f"Embedding model '{self.model_id}' loaded on {device}.")
 
     # ---- Qwen3-Embedding: last-token pooling --------------------------------
@@ -548,9 +554,8 @@ class _LocalEmbeddings:
         logger.debug(f"Embedding {len(texts)} document(s) with '{self.model_id}'.")
         if self._is_qwen3_emb:
             return self._qwen3_embed(texts)
-        vectors = self._st_model.encode(
-            texts, show_progress_bar=False, normalize_embeddings=True,
-        )
+        encode = getattr(self._st_model, "encode_document", self._st_model.encode)
+        vectors = encode(texts, show_progress_bar=False, normalize_embeddings=True)
         return [v.tolist() for v in vectors]
 
     def embed_query(self, text: str) -> List[float]:
@@ -558,11 +563,8 @@ class _LocalEmbeddings:
         logger.debug(f"Embedding query with '{self.model_id}'.")
         if self._is_qwen3_emb:
             return self._qwen3_embed([self._qwen3_query_text(text)])[0]
-        # BGE-style prefix for non-Qwen3 models
-        prefix  = "Represent this sentence for searching relevant passages: "
-        vectors = self._st_model.encode(
-            [prefix + text], show_progress_bar=False, normalize_embeddings=True,
-        )
+        encode = getattr(self._st_model, "encode_query", self._st_model.encode)
+        vectors = encode([text], show_progress_bar=False, normalize_embeddings=True)
         return vectors[0].tolist()
 
 
@@ -618,24 +620,24 @@ class _LocalVisionModel:
         if self._model is not None:
             return
 
-        _ensure_model(self.model_id)
+        model_path = _ensure_model(self.model_id)
         hf_token = get_hf_token() or None
         dtype    = _torch_dtype()
 
         if self.model_id in _GEMMA3_IDS:
-            self._load_gemma3(hf_token, dtype)
+            self._load_gemma3(model_path, hf_token, dtype)
         else:
-            self._load_generic(hf_token, dtype)
+            self._load_generic(model_path, hf_token, dtype)
 
-    def _load_gemma3(self, hf_token, dtype) -> None:
+    def _load_gemma3(self, model_path, hf_token, dtype) -> None:
         from transformers import AutoProcessor, Gemma3ForConditionalGeneration
 
         logger.info(f"Loading Gemma 3 vision model '{self.model_id}'.")
         self._processor = AutoProcessor.from_pretrained(
-            self.model_id, token=hf_token,
+            model_path, token=hf_token,
         )
         self._model = Gemma3ForConditionalGeneration.from_pretrained(
-            self.model_id,
+            model_path,
             torch_dtype=dtype,
             device_map=_device_map(),
             token=hf_token,
@@ -644,35 +646,54 @@ class _LocalVisionModel:
         self._backend = "gemma3"
         logger.info(f"Gemma 3 vision model '{self.model_id}' loaded.")
 
-    def _load_generic(self, hf_token, dtype) -> None:
-        from transformers import AutoModel, AutoTokenizer, AutoProcessor
+    def _load_generic(self, model_path, hf_token, dtype) -> None:
+        from transformers import AutoConfig, AutoModel, AutoProcessor
 
-        self._model = AutoModel.from_pretrained(
-            self.model_id,
-            torch_dtype=dtype,
-            device_map=_device_map(),
-            trust_remote_code=True,
-            token=hf_token,
+        load_kwargs = {
+            "torch_dtype": dtype,
+            "device_map": _device_map(),
+            "trust_remote_code": True,
+            "token": hf_token,
+        }
+        config = AutoConfig.from_pretrained(
+            model_path, trust_remote_code=True, token=hf_token,
         )
+        architectures = " ".join(getattr(config, "architectures", None) or [])
+        if "InternVL" in architectures or "InternLM" in architectures:
+            self._model = AutoModel.from_pretrained(model_path, **load_kwargs)
+        else:
+            try:
+                from transformers import AutoModelForImageTextToText
+                self._model = AutoModelForImageTextToText.from_pretrained(
+                    model_path, **load_kwargs,
+                )
+            except (ImportError, ValueError):
+                try:
+                    from transformers import AutoModelForVision2Seq
+                    self._model = AutoModelForVision2Seq.from_pretrained(
+                        model_path, **load_kwargs,
+                    )
+                except (ImportError, ValueError):
+                    self._model = AutoModel.from_pretrained(model_path, **load_kwargs)
         self._model.eval()
 
         arch = type(self._model).__name__
         if "InternVL" in arch or "InternLM" in arch:
             from transformers import AutoTokenizer
             self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_id, trust_remote_code=True, token=hf_token,
+                model_path, trust_remote_code=True, token=hf_token,
             )
             self._backend = "internvl"
             logger.info(f"Vision model '{self.model_id}' loaded as InternVL backend.")
         else:
             try:
                 self._processor = AutoProcessor.from_pretrained(
-                    self.model_id, trust_remote_code=True, token=hf_token,
+                    model_path, trust_remote_code=True, token=hf_token,
                 )
             except Exception:
                 from transformers import AutoTokenizer
                 self._tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_id, trust_remote_code=True, token=hf_token,
+                    model_path, trust_remote_code=True, token=hf_token,
                 )
             self._backend = "generic"
             logger.info(f"Vision model '{self.model_id}' loaded as generic VLM backend.")
@@ -741,9 +762,29 @@ class _LocalVisionModel:
         device = next(self._model.parameters()).device
 
         if self._processor is not None:
-            inputs = self._processor(
-                text=question, images=self._last_pil_image, return_tensors="pt",
-            )
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": self._last_pil_image},
+                        {"type": "text", "text": question},
+                    ],
+                }
+            ]
+            try:
+                inputs = self._processor.apply_chat_template(
+                    messages,
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                )
+            except (AttributeError, TypeError, ValueError):
+                inputs = self._processor(
+                    text=f"<image>\n{question}",
+                    images=self._last_pil_image,
+                    return_tensors="pt",
+                )
             inputs = {k: v.to(device) for k, v in inputs.items()}
             tok    = self._processor.tokenizer
         else:
@@ -753,7 +794,8 @@ class _LocalVisionModel:
 
         with torch.inference_mode():
             output_ids = self._model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
-        input_len = list(inputs.values())[0].shape[1]
+        input_ids = inputs.get("input_ids")
+        input_len = input_ids.shape[1] if input_ids is not None else 0
         return tok.decode(output_ids[0][input_len:], skip_special_tokens=True).strip()
 
     # ---- Public .chat() interface -----------------------------------------

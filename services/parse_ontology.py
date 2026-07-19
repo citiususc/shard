@@ -3,17 +3,19 @@
 parse-ontology service  (br2shacl-ui)
 
 Parses an uploaded ontology with rdflib and returns its classes and properties
-for the UI, plus a derived base namespace and a clean SHACL-ready prefix block.
+for the UI, plus detected ontology/shape namespaces and a SHACL-ready prefix block.
 
 Generalised from the original demo service:
   * parses with bind_namespaces="none" so only the ontology's own prefixes show
-  * derives the base namespace (ns_utils) and returns it so the UI can edit it
-  * returns a prefix block aligned with the generator prompts (era:/era-sh:
-    aliased to the base/shapes namespaces) for any ontology
+  * ranks namespace candidates by ontology-term coverage
+  * keeps generated-shape namespaces separate from ontology-term namespaces
+  * returns generic prefixes without injecting domain-specific aliases
 
 Endpoint:  POST http://127.0.0.1:9100/parse-ontology
   request : {"filename": str, "content": str}
-  response: {"entities": [...], "prefixes": str, "base_namespace": str}
+  response: {"entities": [...], "prefixes": str, "base_namespace": str,
+             "shape_namespace": str, "shape_prefix": str,
+             "namespace_analysis": {...}}
 """
 
 import os
@@ -23,7 +25,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "text2shacl_core"))
 
 from rdflib import Namespace, RDF, RDFS, OWL, URIRef, BNode, Literal
-from ontology_io import ontology_base_namespace, ontology_prefix_block, parse_ontology_graph
+from ontology_io import (
+    ontology_namespace_analysis,
+    ontology_prefix_block,
+    ontology_shape_prefix,
+    ontology_shapes_namespace,
+    parse_ontology_graph,
+)
 from service_http import new_request_id, read_json, send_health, send_json, send_options
 
 HOST = "127.0.0.1"
@@ -132,11 +140,43 @@ def parse_ontology(filename, content):
             seen.add(key)
             add_entity(entities, graph, subject, "property", kind)
 
-    base_ns = ontology_base_namespace(graph)
-    prefixes = ontology_prefix_block(graph, base_ns)
+    namespace_analysis = ontology_namespace_analysis(graph)
+    base_ns = namespace_analysis["namespace"]
+    shape_ns, shape_ns_source = ontology_shapes_namespace(graph, base_ns)
+    shape_prefix, shape_prefix_source = ontology_shape_prefix(graph, shape_ns)
+    declared_namespaces = {
+        str(prefix or ""): str(namespace)
+        for prefix, namespace in graph.namespaces()
+    }
+    declared_prefixes = set(declared_namespaces)
+    has_primary_prefix = any(
+        prefix and namespace == base_ns
+        for prefix, namespace in declared_namespaces.items()
+    )
+    managed_prefixes = []
+    if base_ns and not has_primary_prefix and "onto" not in declared_prefixes:
+        managed_prefixes.append("onto")
+    if shape_ns and shape_prefix not in declared_prefixes:
+        managed_prefixes.append(shape_prefix)
+    namespace_analysis = {
+        **namespace_analysis,
+        "shape_namespace": shape_ns,
+        "shape_namespace_source": shape_ns_source,
+        "shape_prefix": shape_prefix,
+        "shape_prefix_source": shape_prefix_source,
+        "managed_prefixes": managed_prefixes,
+    }
+    prefixes = ontology_prefix_block(graph, base_ns, shape_ns, shape_prefix)
 
     entities.sort(key=lambda item: (item["type"], item["label"].lower()))
-    return {"prefixes": prefixes, "entities": entities, "base_namespace": base_ns}
+    return {
+        "prefixes": prefixes,
+        "entities": entities,
+        "base_namespace": base_ns,
+        "shape_namespace": shape_ns,
+        "shape_prefix": shape_prefix,
+        "namespace_analysis": namespace_analysis,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -164,12 +204,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = read_json(self)
         except ValueError as exc:
-            self._send_json(400, {"error": str(exc), "entities": [], "prefixes": "", "base_namespace": ""})
+            self._send_json(400, {"error": str(exc), "entities": [], "prefixes": "",
+                                  "base_namespace": "", "shape_namespace": "", "shape_prefix": "",
+                                  "namespace_analysis": {}})
             return
         try:
             result = parse_ontology(payload.get("filename", ""), payload.get("content", ""))
         except Exception as exc:
-            self._send_json(400, {"error": str(exc), "entities": [], "prefixes": "", "base_namespace": ""})
+            self._send_json(400, {"error": str(exc), "entities": [], "prefixes": "",
+                                  "base_namespace": "", "shape_namespace": "", "shape_prefix": "",
+                                  "namespace_analysis": {}})
             return
         self._send_json(200, result)
 

@@ -20,9 +20,3 @@ chromadb>=0.5
 beautifulsoup4>=4.12
 Pillow>=10.0
 unstructured>=0.14
-
-# Optional — only needed to run inference LOCALLY on a GPU via HuggingFace
-# (the demo defaults to Databricks and does NOT require these):
-# torch
-# transformers
-# accelerate

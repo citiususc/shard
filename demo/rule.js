@@ -4,12 +4,14 @@ let entityFilter = "all";
 let selectedEntity = null;
 let lastCandidates = [];
 let semanticSearchActive = false;
+let ruleGenerationLogId = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   wireReset("reset-demo");
   wireSessionControls();
   wireModelControls();
   wireShapeValidationProfileControls();
+  wireAstreaBaselineControls();
   wireExport("export-shapes", () => "");
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
 
@@ -29,16 +31,6 @@ document.addEventListener("DOMContentLoaded", () => {
     byId("generate-shape").disabled = true;
     clearSemanticResults(false);
     renderEntities();
-  });
-
-  // Logs drawer
-  byId("logs-toggle").addEventListener("click", () => {
-    const open = byId("logs-drawer").classList.toggle("open");
-    byId("logs-toggle").classList.toggle("active", open);
-  });
-  byId("logs-close").addEventListener("click", () => {
-    byId("logs-drawer").classList.remove("open");
-    byId("logs-toggle").classList.remove("active");
   });
 
   // Entity filter buttons (scoped to [data-filter] so the provider toggle,
@@ -186,55 +178,136 @@ async function generateShape() {
   if (!o || !selectedEntity) { setStatus("Select a target first"); return; }
   const rule = byId("business-rule").value.trim();
   const m = getModels();
+  const requestId = makeRequestId();
+
+  ruleGenerationLogId = beginExecutionRun({
+    source: "Rule → Shape",
+    metadata: ruleExecutionMetadata(o, m, selectedEntity.label || selectedEntity.iri, requestId),
+  });
+  appendExecutionEntry(ruleGenerationLogId, {
+    level: "info",
+    kind: "rule",
+    stage: "rule",
+    message: `Business rule · ${rule || "(empty rule)"}`,
+  });
+  appendExecutionEntry(ruleGenerationLogId, {
+    level: "info",
+    stage: "target",
+    indent: 1,
+    message: `Selected ontology target · ${selectedEntity.iri}`,
+  });
 
   byId("generate-shape").disabled = true;
   const panel = byId("validation-panel");
   panel.className = "validation-panel";
 
   try {
+    appendExecutionEntry(ruleGenerationLogId, {
+      level: "info", stage: "configuration", indent: 1, message: "Checking model configuration",
+    });
     setStatus("Checking model configuration…");
     panel.className = "validation-panel backend";
     panel.textContent = "Checking model configuration before generation…";
     const modelCheck = await validateSelectedModels(["llmModel"]);
     if (!modelCheck.ok) {
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "error", stage: "configuration", indent: 1,
+        message: "Model configuration check failed", details: modelCheck.message,
+      });
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "error", kind: "summary", stage: "summary",
+        message: "Failed before generation · model configuration unavailable",
+      });
+      finishExecutionRun(ruleGenerationLogId, "failed");
       panel.className = "validation-panel backend error";
       panel.textContent = `Generation blocked by model/backend configuration:\n${modelCheck.message}`;
       setStatus("Model configuration error");
       return;
     }
+    appendExecutionEntry(ruleGenerationLogId, {
+      level: "pass", stage: "configuration", indent: 1, message: "Model configuration available",
+    });
 
     setStatus("Generating SHACL shape…");
     panel.className = "validation-panel";
     panel.textContent = "Generating… (this may take a while on the first call).";
     const target = { ...selectedEntity, ontologyNote: byId("ontology-note").value };
+    appendExecutionEntry(ruleGenerationLogId, {
+      level: "info", stage: "generation", indent: 1,
+      message: `Generating shape for ${selectedEntity.iri}`,
+    });
     const data = await fetchJSON(SERVICES.build, {
       method: "POST",
       body: JSON.stringify({
         business_rule: rule, target, prefixes: o.prefixes,
         ontology_content: o.content, base_namespace: o.baseNamespace,
+        shape_namespace: o.shapeNamespace,
+        shape_prefix: o.shapePrefix,
         domain_context: byId("domain-context").value.trim(),
         generation_guidance: byId("generation-guidance").value.trim(),
         validation_profiles: getShapeValidationProfiles(),
+        astrea_baseline: astreaBaselinePayload(),
         model: m.llmModel, provider: m.provider, temperature: m.temperature,
         inference_config: getInferenceConfig(),
       }),
-    }, { label: "Generate SHACL shape", timeoutMs: 120000 });
+    }, { label: "Generate SHACL shape", timeoutMs: 120000, requestId });
+    updateExecutionRun(ruleGenerationLogId, {
+      metadata: { requestId: data.request_id || requestId },
+    });
     byId("shape-editor").value = data.shape || "";
     refreshHighlight("shape-editor");
-    renderLogs(data.logs);
+    if (data.logs) {
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "debug", stage: "backend", indent: 1,
+        message: "Backend execution details", details: data.logs,
+      });
+    }
     if (data.not_found) {
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "warn", stage: "generation", indent: 1,
+        message: "The model could not justify a shape for this rule and target",
+        details: data.message,
+      });
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "done", kind: "summary", stage: "summary",
+        message: `Completed · 0 shapes generated · ${data.attempts || 0} attempt(s)`,
+      });
+      finishExecutionRun(ruleGenerationLogId, "completed", { shapes: 0 });
       panel.className = "validation-panel";
       panel.textContent = data.message || "No shape could be justified from this rule.";
     } else if (data.valid) {
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "pass", stage: "syntax", indent: 1, message: "Turtle syntax is valid",
+      });
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "pass", stage: "grounding", indent: 1,
+        message: `Ontology grounding passed · ${selectedEntity.iri}`,
+      });
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "pass", stage: "validation", indent: 1,
+        message: `SHACL2SHACL validation passed · ${validationScopeLabel(data)}`,
+      });
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "done", stage: "result", indent: 1,
+        message: `Shape generated in ${data.attempts || 1} attempt(s)`,
+      });
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "done", kind: "summary", stage: "summary",
+        message: "Completed · 1 valid shape · 0 discarded",
+      });
+      finishExecutionRun(ruleGenerationLogId, "completed", { shapes: 1, valid: 1, invalid: 0 });
       panel.className = "validation-panel ok";
       panel.textContent = data.message || "Valid SHACL generated.";
     } else if (data.error_type === "backend") {
+      logRuleGenerationFailure(data);
       panel.className = "validation-panel backend error";
       panel.textContent = `Model/backend error — generation did not produce a shape:\n${data.error || data.message}`;
     } else if (data.error_type === "profile") {
+      logRuleGenerationFailure(data);
       panel.className = "validation-panel shape-error";
       panel.textContent = validationResultMessage(data);
     } else {
+      logRuleGenerationFailure(data);
       panel.className = "validation-panel shape-error";
       panel.textContent = `Shape/Turtle error — the backend ran, but the generated shape is invalid:\nReturned after ${data.attempts} attempts.\n${data.error || data.message}`;
     }
@@ -242,7 +315,22 @@ async function generateShape() {
     else if (data.error_type === "backend") setStatus("Backend/model error");
     else setStatus("Shape needs fixing");
   } catch (e) {
-    if (e.payload && e.payload.logs) renderLogs(e.payload.logs);
+    updateExecutionRun(ruleGenerationLogId, { metadata: { requestId: e.requestId || requestId } });
+    if (e.payload && e.payload.logs) {
+      appendExecutionEntry(ruleGenerationLogId, {
+        level: "debug", stage: "backend", indent: 1,
+        message: "Backend execution details", details: e.payload.logs,
+      });
+    }
+    appendExecutionEntry(ruleGenerationLogId, {
+      level: "error", stage: "service", indent: 1,
+      message: "Generation service request failed", details: e.message,
+    });
+    appendExecutionEntry(ruleGenerationLogId, {
+      level: "error", kind: "summary", stage: "summary",
+      message: "Failed · no shape generated",
+    });
+    finishExecutionRun(ruleGenerationLogId, "failed", { shapes: 0, invalid: 1 });
     panel.className = "validation-panel backend error";
     panel.textContent = `Generation service/backend error:\n${e.message}`;
     setStatus("Generation failed");
@@ -257,16 +345,39 @@ async function checkShape() {
   const shape = byId("shape-editor").value.trim();
   if (!shape) return;
   const panel = byId("validation-panel");
+  const m = getModels();
+  const logId = beginExecutionRun({
+    source: "Rule → Shape",
+    metadata: ruleExecutionMetadata(o, m, "Manual shape check"),
+  });
+  appendExecutionEntry(logId, {
+    level: "info", stage: "validation", message: `Checking edited shape · ${activeValidationScopeLabel()}`,
+  });
   panel.className = "validation-panel";
   panel.textContent = "Checking…";
   try {
     const data = await validateTurtle(shape, (o && o.prefixes) || "");
-    if (data.valid) { panel.className = "validation-panel ok"; panel.textContent = validationResultMessage(data); }
+    if (data.valid) {
+      appendExecutionEntry(logId, {
+        level: "pass", stage: "validation", message: `Validation passed · ${validationScopeLabel(data)}`,
+      });
+      finishExecutionRun(logId, "completed", { valid: 1 });
+      panel.className = "validation-panel ok"; panel.textContent = validationResultMessage(data);
+    }
     else {
+      appendExecutionEntry(logId, {
+        level: "error", stage: "validation", message: "Validation failed",
+        details: data.report_text || data.error || data.message,
+      });
+      finishExecutionRun(logId, "failed", { invalid: 1 });
       panel.className = "validation-panel shape-error";
       panel.textContent = validationResultMessage(data);
     }
   } catch (e) {
+    appendExecutionEntry(logId, {
+      level: "error", stage: "service", message: "Validation service request failed", details: e.message,
+    });
+    finishExecutionRun(logId, "failed", { invalid: 1 });
     panel.className = "validation-panel backend error";
     panel.textContent = `Validation service/backend error:\n${e.message}`;
   }
@@ -276,30 +387,73 @@ async function acceptCurrent() {
   const o = getOntology();
   const shape = byId("shape-editor").value.trim();
   if (!shape) { setStatus("Nothing to accept"); return; }
-  const data = await validateTurtle(shape, (o && o.prefixes) || "");
-  if (!data.valid) {
-    const panel = byId("validation-panel");
-    panel.className = "validation-panel shape-error";
-    panel.textContent = `Cannot accept invalid generated shape:\n${validationResultMessage(data)}`;
-    return;
+  const logId = beginExecutionRun({
+    source: "Rule → Shape",
+    metadata: ruleExecutionMetadata(o, getModels(), "Accept shape"),
+  });
+  appendExecutionEntry(logId, {
+    level: "info", stage: "validation", message: `Revalidating before acceptance · ${activeValidationScopeLabel()}`,
+  });
+  try {
+    const data = await validateTurtle(shape, (o && o.prefixes) || "");
+    if (!data.valid) {
+      appendExecutionEntry(logId, {
+        level: "error", stage: "validation", message: "Acceptance blocked by active validation",
+        details: data.report_text || data.error || data.message,
+      });
+      finishExecutionRun(logId, "failed", { accepted: 0 });
+      const panel = byId("validation-panel");
+      panel.className = "validation-panel shape-error";
+      panel.textContent = `Cannot accept invalid generated shape:\n${validationResultMessage(data)}`;
+      return;
+    }
+    acceptShape(selectedEntity ? selectedEntity.iri : "(shape)", shape);
+    appendExecutionEntry(logId, {
+      level: "done", kind: "summary", stage: "accept", message: "Shape revalidated and accepted",
+    });
+    finishExecutionRun(logId, "completed", { accepted: 1 });
+    renderAccepted(byId("accepted-list"), byId("coverage-tag"));
+    setStatus("Shape accepted");
+  } catch (e) {
+    appendExecutionEntry(logId, {
+      level: "error", stage: "service", message: "Acceptance validation request failed", details: e.message,
+    });
+    finishExecutionRun(logId, "failed", { accepted: 0 });
+    setStatus("Validation failed");
   }
-  acceptShape(selectedEntity ? selectedEntity.iri : "(shape)", shape);
-  renderAccepted(byId("accepted-list"), byId("coverage-tag"));
-  setStatus("Shape accepted");
 }
 
-function renderLogs(logs) {
-  const el = byId("logs-content");
-  if (!el) return;
-  if (!logs || !logs.trim()) { el.textContent = "(no log output captured for this run)"; return; }
-  const html = logs.split("\n").map((line) => {
-    const e = esc(line);
-    if (line.includes("[ERROR]")) return `<span class="log-error">${e}</span>`;
-    if (line.includes("[WARN]")) return `<span class="log-warn">${e}</span>`;
-    if (line.includes("[INFO]")) return `<span class="log-info">${e}</span>`;
-    if (line.includes("[DEBUG]")) return `<span class="log-debug">${e}</span>`;
-    return e;
-  }).join("\n");
-  el.innerHTML = html;
-  el.scrollTop = el.scrollHeight;
+function ruleExecutionMetadata(ontology, models, artifact, requestId = "") {
+  return {
+    artifact,
+    ontology: ontology && ontology.filename,
+    ruleCount: 1,
+    provider: models && models.provider,
+    models: models ? [models.llmModel] : [],
+    validation: activeValidationScopeLabel(),
+    astreaBaseline: getAstreaBaseline() && getAstreaBaseline().name,
+    astreaMergeMode: getAstreaMergeMode(),
+    target: selectedEntity && selectedEntity.iri,
+    requestId,
+  };
+}
+
+function logRuleGenerationFailure(data = {}) {
+  const type = data.error_type || "generation";
+  const labels = {
+    parse: "Generated Turtle remained invalid after retries",
+    grounding: "Generated shape contains IRIs outside the uploaded ontology",
+    profile: "Generated shape failed active SHACL2SHACL validation",
+    backend: "Model/backend generation failed",
+  };
+  appendExecutionEntry(ruleGenerationLogId, {
+    level: "error", stage: type, indent: 1,
+    message: labels[type] || "Shape generation failed",
+    details: data.error || data.message,
+  });
+  appendExecutionEntry(ruleGenerationLogId, {
+    level: "error", kind: "summary", stage: "summary",
+    message: `Failed · 0 valid shapes · 1 discarded · ${data.attempts || 0} attempt(s)`,
+  });
+  finishExecutionRun(ruleGenerationLogId, "failed", { shapes: 0, valid: 0, invalid: 1 });
 }

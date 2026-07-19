@@ -19,37 +19,23 @@ from __future__ import annotations
 
 from typing import Any
 
-# br2shacl-ui: import the shared budget/temperature constants from the HuggingFace
-# backend when it is available (it pulls in torch/transformers). For the
-# self-contained Databricks-only demo, torch may not be installed, so fall back
-# to the identical constants defined in the Databricks backend. Routing to the
-# real HF backend (via _hf()) still happens lazily, only if an HF model id is used.
-try:
-    from model_loader_hf import (
-        DEFAULT_EMBEDDING_MODEL_ID,
-        DEFAULT_TEMPERATURE,
-        DEFAULT_EVAL_MAX_NEW_TOKENS,
-        DEFAULT_GEN_MAX_NEW_TOKENS,
-        IMG_MAX_NEW_TOKENS,
-        TEXT_MAX_NEW_TOKENS,
-    )
-except Exception:  # torch/transformers not installed
-    from model_loader_databricks import (
-        DEFAULT_EMBEDDING_MODEL_ID,
-        DEFAULT_TEMPERATURE,
-        DEFAULT_EVAL_MAX_NEW_TOKENS,
-        DEFAULT_GEN_MAX_NEW_TOKENS,
-        IMG_MAX_NEW_TOKENS,
-        TEXT_MAX_NEW_TOKENS,
-    )
-
 from model_loader_databricks import (
+    DEFAULT_TEMPERATURE,
+    DEFAULT_EVAL_MAX_NEW_TOKENS,
+    DEFAULT_GEN_MAX_NEW_TOKENS,
     DEFAULT_LLM_MODEL_ID,
     DEFAULT_TEXT_MODEL_ID,
-    DEFAULT_VISION_MODEL_ID
+    DEFAULT_VISION_MODEL_ID,
+    IMG_MAX_NEW_TOKENS,
+    TEXT_MAX_NEW_TOKENS,
 )
 
+# Keep the historical unified-loader default without importing the optional
+# Hugging Face backend (and therefore torch) until it is actually selected.
+DEFAULT_EMBEDDING_MODEL_ID = "Qwen/Qwen3-Embedding-0.6B"
+
 from Logger import logger
+from deployment_policy import ensure_provider_enabled
 from runtime_config import get_inference_config
 
 
@@ -75,10 +61,14 @@ def _use_hf_backend(model_id: str) -> bool:
     """Respect the UI provider when supplied; otherwise infer from model id."""
     provider = (get_inference_config().get("provider") or "").lower()
     if provider == "huggingface":
+        ensure_provider_enabled("huggingface")
         return True
     if provider == "databricks":
         return False
-    return _is_hf_model_id(model_id)
+    use_huggingface = _is_hf_model_id(model_id)
+    if use_huggingface:
+        ensure_provider_enabled("huggingface")
+    return use_huggingface
 
 
 # ---------------------------------------------------------------------------

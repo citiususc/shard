@@ -56,3 +56,15 @@ def send_options(handler) -> None:
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     handler.send_header("Content-Length", "0")
     handler.end_headers()
+
+
+def reject_disabled_provider(handler, payload: Dict[str, Any], request_id: Optional[str] = None) -> bool:
+    """Send a policy error and return True when a provider is disabled."""
+    from deployment_policy import ProviderDisabledError, ensure_request_provider_enabled
+
+    try:
+        ensure_request_provider_enabled(payload)
+    except ProviderDisabledError as exc:
+        send_json(handler, exc.status, exc.as_payload(), request_id=request_id)
+        return True
+    return False

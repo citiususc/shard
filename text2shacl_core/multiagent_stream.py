@@ -276,6 +276,9 @@ def stream_shacl_generation(
 
     base_ns = base_namespace or ns_utils.derive_base_namespace(ontology_graph)
     prefixes = prefix_block or ns_utils.build_prefix_block(ontology_graph, base_ns)
+    prefix_namespaces = dict(ns_utils.split_prefix_block(prefixes))
+    shape_ns = prefix_namespaces.get("shape") or ns_utils.shapes_namespace(base_ns)
+    prefixes = ns_utils.ensure_legacy_era_aliases(prefixes, base_ns, shape_ns)
 
     logger.info(f"[stream] base_namespace={base_ns}")
 

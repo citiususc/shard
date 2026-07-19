@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>text2shacl — SHACL co-construction</title>
-    <link rel="stylesheet" href="styles.css?v=60">
+    <link rel="stylesheet" href="styles.css?v=74">
   </head>
   <body class="landing-page">
     <header class="topbar">
@@ -18,9 +18,12 @@
         </div>
       </div>
       <nav class="topnav">
-        <a class="navlink active" href="index.html">Home</a>
         <a class="navlink" href="rule.html">Rule → Shape</a>
         <a class="navlink" href="guide.html">Guide → Shapes</a>
+        <button class="logs-button" id="logs-toggle" type="button">
+          <span>Logs</span><span class="logs-count" id="logs-count" hidden>0</span>
+        </button>
+        <span class="status-pill" id="status-pill">Ready</span>
       </nav>
     </header>
 
@@ -94,6 +97,25 @@ ex:TrackShape a sh:NodeShape ;
       </section>
     </main>
 
-    <script src="common.js?v=27"></script>
+    <section class="logs-drawer" id="logs-drawer" aria-label="Execution logs">
+      <div class="logs-drawer-bar">
+        <span id="logs-title">Execution logs</span>
+        <div class="logs-toolbar">
+          <input class="logs-search" id="logs-search" type="search" placeholder="Search logs" aria-label="Search execution logs">
+          <select class="logs-level" id="logs-level" aria-label="Filter execution logs by level">
+            <option value="all">All levels</option>
+            <option value="issues">Issues</option>
+            <option value="errors">Errors</option>
+          </select>
+          <label class="logs-autoscroll"><input id="logs-autoscroll" type="checkbox" checked>Auto-scroll</label>
+          <button id="logs-copy" type="button">Copy</button>
+          <button id="logs-clear" type="button">Clear</button>
+          <button id="logs-close" type="button">Close</button>
+        </div>
+      </div>
+      <div class="logs-content" id="logs-content" aria-live="polite"></div>
+    </section>
+
+    <script src="common.js?v=37"></script>
   </body>
 </html>

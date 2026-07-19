@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "text2shacl_core"))
 from find_relevant_terms import embedding_status, prepare_embeddings  # noqa: E402
 from model_loader import get_chat_llm  # noqa: E402
 from parse_ontology import parse_ontology  # noqa: E402
-from rule_target_resolver import resolve_template  # noqa: E402
+from rule_target_resolver import DEFAULT_SEMANTIC_THRESHOLD, resolve_template  # noqa: E402
 from runtime_config import inference_config  # noqa: E402
 
 
@@ -300,8 +300,8 @@ def main():
     parser.add_argument(
         "--semantic-threshold",
         type=float,
-        default=float(os.environ.get("BR2SHACL_SEMANTIC_THRESHOLD", "0.74")),
-        help="Semantic confidence threshold. Default: 0.74.",
+        default=float(os.environ.get("BR2SHACL_SEMANTIC_THRESHOLD", str(DEFAULT_SEMANTIC_THRESHOLD))),
+        help=f"Semantic confidence threshold. Default: {DEFAULT_SEMANTIC_THRESHOLD}.",
     )
     parser.add_argument(
         "--llm-fallback",
