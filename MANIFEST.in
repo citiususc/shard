@@ -1,0 +1,10 @@
+include LICENSE
+include CITATION.cff
+include requirements.txt
+include requirements-local.txt
+include run_demo.py
+recursive-include docs *.md
+recursive-include frontend *
+recursive-include profiles *.ttl
+recursive-include examples *.ttl *.md *.html
+recursive-include src/shard/resources *.json *.ttl

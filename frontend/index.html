@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SHARD — Ontology-grounded SHACL authoring</title>
+    <link rel="stylesheet" href="css/base.css?v=1">
+    <link rel="stylesheet" href="css/workspace.css?v=1">
+    <link rel="stylesheet" href="css/editor.css?v=1">
+    <link rel="stylesheet" href="css/logs.css?v=1">
+    <link rel="stylesheet" href="css/layout.css?v=1">
+    <link rel="stylesheet" href="css/support-panels.css?v=1">
+    <link rel="stylesheet" href="css/theme.css?v=1">
+  </head>
+  <body class="landing-page">
+    <header class="topbar">
+      <div class="brand">
+        <a class="brand-logo-link" href="index.html" aria-label="SHARD home">
+          <img class="brand-logo" src="assets/images/shard-logo.png" alt="SHARD">
+        </a>
+        <div class="brand-copy">
+          <p class="eyebrow">CITIUS</p>
+          <p class="brand-context">Ontology-grounded SHACL authoring</p>
+        </div>
+      </div>
+      <nav class="topnav">
+        <a class="navlink flow-label" href="rule.html"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></a>
+        <a class="navlink flow-label" href="guide.html"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Rules</span></a>
+        <button class="logs-button" id="logs-toggle" type="button">
+          <span>Logs</span><span class="logs-count" id="logs-count" hidden>0</span>
+        </button>
+        <span class="status-pill" id="status-pill">Ready</span>
+      </nav>
+    </header>
+
+    <main class="landing">
+      <section class="hero">
+        <div class="hero-main">
+          <div class="hero-copy">
+            <p class="hero-kicker">An Interactive Ontology-Grounded SHACL Authoring from Business Rules</p>
+            <h1 class="hero-title">Turn business knowledge into reviewable SHACL shapes.</h1>
+            <p class="lead">
+              Generate SHACL validation shapes from an OWL ontology and its business rules.
+              Work one rule at a time, or process a structured batch of business rules into a queue of
+              shapes you can inspect, edit, validate and export.
+            </p>
+            <div class="hero-actions">
+              <a class="github-repository-link" href="https://github.com/citiususc/br2shacl-ui" target="_blank" rel="noopener noreferrer">
+                <span>GitHub repository</span>
+                <span class="external-link-arrow" aria-hidden="true"></span>
+              </a>
+              <div class="institutional-mark" title="Centro Singular de Investigación en Tecnoloxías Intelixentes">
+                <img src="assets/images/citius-logo.png" alt="CITIUS — Centro Singular de Investigación en Tecnoloxías Intelixentes">
+              </div>
+            </div>
+            <div class="hero-stats" aria-label="Shared workflow capabilities">
+              <span>Shared ontology</span>
+              <span>Editable Turtle</span>
+              <span>Model-assisted review</span>
+            </div>
+          </div>
+
+          <div class="hero-preview" aria-label="SHARD workflow preview">
+            <div class="preview-window">
+              <div class="preview-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="preview-line strong">Business rule</div>
+              <div class="preview-line">Every Track must define exactly one nominal gauge.</div>
+              <div class="preview-flow">
+                <span>Ontology</span>
+                <span>Terms</span>
+                <span>SHACL</span>
+              </div>
+              <pre class="preview-code">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
+
+ex:TrackShape a sh:NodeShape ;
+  sh:targetClass ex:Track ;
+  sh:property [
+    sh:path ex:nominalGauge ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] .</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="cards workflow-cards">
+          <a class="card workflow-card" href="rule.html">
+            <span class="card-arrow" aria-hidden="true"></span>
+            <p class="step">Workflow 1</p>
+            <h2 class="flow-label"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></h2>
+            <p>Write a business rule, pick the ontology target, and generate a single SHACL
+               shape you can edit, validate and accept.</p>
+            <ul class="card-list">
+              <li>Semantic ontology-term ranking</li>
+              <li>Target-aware generation context</li>
+              <li>Fast review before accepting</li>
+            </ul>
+          </a>
+          <a class="card workflow-card" href="guide.html">
+            <span class="card-arrow" aria-hidden="true"></span>
+            <p class="step">Workflow 2</p>
+            <h2 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Rules</span></h2>
+            <p>Upload a structured batch of business rules (.html or .md). The pipeline
+               resolves each extracted rule and streams generated shapes for review.</p>
+            <ul class="card-list">
+              <li>Batch validation and rule indexing</li>
+              <li>Shape queue with validation status</li>
+              <li>Export accepted Turtle shapes</li>
+            </ul>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <section class="logs-drawer" id="logs-drawer" aria-label="Execution logs">
+      <div class="logs-drawer-bar">
+        <span id="logs-title">Execution logs</span>
+        <div class="logs-toolbar">
+          <input class="logs-search" id="logs-search" type="search" placeholder="Search logs" aria-label="Search execution logs">
+          <select class="logs-level" id="logs-level" aria-label="Filter execution logs by level">
+            <option value="all">All levels</option>
+            <option value="issues">Issues</option>
+            <option value="errors">Errors</option>
+          </select>
+          <label class="logs-autoscroll"><input id="logs-autoscroll" type="checkbox" checked>Auto-scroll</label>
+          <button id="logs-copy" type="button">Copy</button>
+          <button id="logs-clear" type="button">Clear</button>
+          <button id="logs-close" type="button">Close</button>
+        </div>
+      </div>
+      <div class="logs-content" id="logs-content" aria-live="polite"></div>
+    </section>
+
+    <script src="js/core.js?v=1"></script>
+    <script src="js/logs.js?v=1"></script>
+    <script src="js/turtle.js?v=1"></script>
+    <script src="js/models.js?v=1"></script>
+    <script src="js/ontology.js?v=1"></script>
+    <script src="js/shapes.js?v=1"></script>
+    <script src="js/export.js?v=1"></script>
+  </body>
+</html>

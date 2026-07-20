@@ -1,0 +1,533 @@
+/* SHARD validation, baseline and compact viewport panels. */
+
+/* Shared validation and Astrea evidence panel. */
+.shape-support-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.shape-support-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shape-support-pane:first-child { padding-right: 12px; }
+.shape-support-pane + .shape-support-pane {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+
+.shape-support-pane .section-title h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shape-support-clear {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px !important;
+  padding: 0 !important;
+  border-radius: 999px;
+  font-size: 1rem !important;
+  line-height: 1;
+}
+
+.astrea-control-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.astrea-control-label {
+  margin: 0 !important;
+  font-size: 0.64rem !important;
+  white-space: nowrap;
+}
+
+.astrea-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  min-height: 30px;
+  padding: 3px 26px 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.astrea-merge-controls {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.astrea-merge-controls[hidden] { display: none; }
+
+.astrea-baseline-status {
+  min-width: 0;
+  margin: 6px 0 0;
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.astrea-baseline-status.astrea-status-error {
+  color: var(--err);
+  font-weight: 700;
+}
+
+.astrea-baseline-status.astrea-status-ready {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+@media (min-width: 1061px) {
+  body.rule-page,
+  body.guide-page {
+    --matched-shape-profile-block-height: clamp(184px, 16.5vh, 204px);
+  }
+
+  body.rule-page .shape-profile-block,
+  body.guide-page .shape-profile-block {
+    padding: 10px;
+  }
+
+  body.rule-page .shape-support-pane .profile-file-drop,
+  body.guide-page .shape-support-pane .profile-file-drop {
+    flex-basis: 38px;
+    min-height: 38px;
+    padding: 5px 8px;
+    flex-direction: column !important;
+    justify-content: center;
+    gap: 1px !important;
+    text-align: center;
+  }
+
+  body.rule-page .shape-support-pane .profile-file-drop,
+  body.guide-page .shape-support-pane .profile-file-drop,
+  body.rule-page .shape-support-pane .profile-file-drop span,
+  body.rule-page .shape-support-pane .profile-file-drop small,
+  body.guide-page .shape-support-pane .profile-file-drop span,
+  body.guide-page .shape-support-pane .profile-file-drop small {
+    min-width: 0;
+  }
+
+  body.rule-page .shape-support-pane .profile-file-drop small,
+  body.guide-page .shape-support-pane .profile-file-drop small {
+    overflow: hidden;
+    font-size: 0.62rem;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+  }
+
+  body.rule-page .shape-support-pane .profile-file-list,
+  body.guide-page .shape-support-pane .profile-file-list {
+    margin-top: 5px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 880px) {
+  body.rule-page,
+  body.guide-page {
+    --matched-shape-profile-block-height: 178px;
+  }
+
+  .shape-support-pane:first-child { padding-right: 9px; }
+  .shape-support-pane + .shape-support-pane { padding-left: 9px; }
+  .astrea-control-row { gap: 5px; }
+}
+
+@media (max-width: 700px) {
+  .shape-support-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+  .shape-support-pane:first-child {
+    padding-right: 0;
+    padding-bottom: 12px;
+  }
+  .shape-support-pane + .shape-support-pane {
+    padding-top: 12px;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}
+
+/* Shared compact header on laptop-height desktop viewports. */
+@media (min-width: 1061px) and (max-height: 950px) {
+  body.landing-page .topbar {
+    height: 74px;
+    padding: 8px 24px;
+  }
+
+  body.landing-page .brand-logo-link {
+    --brand-logo-width: clamp(166px, 13vw, 190px);
+  }
+
+  body.landing-page .landing {
+    height: calc(100dvh - 74px);
+  }
+}
+
+/* Rule workspace on laptop-height desktop viewports. */
+@media (min-width: 1061px) and (max-height: 950px) {
+  body.rule-page .topbar {
+    height: 74px;
+    padding: 8px 24px;
+  }
+
+  body.rule-page .brand-logo-link {
+    --brand-logo-width: clamp(166px, 13vw, 190px);
+  }
+
+  body.rule-page .workspace {
+    height: calc(100dvh - 74px);
+  }
+
+  body.rule-page .rail,
+  body.rule-page .canvas {
+    padding: 10px 12px;
+  }
+
+  body.rule-page .rail {
+    --rail-control-gap: 8px;
+    --rail-label-top: 9px;
+    --rail-label-bottom: 5px;
+    --rail-section-gap: 26px;
+  }
+
+  body.rule-page .rail .session-actions {
+    gap: 10px !important;
+  }
+
+  body.rule-page .rail .custom-model-row {
+    gap: 9px !important;
+  }
+
+  body.rule-page .focus-layout,
+  body.rule-page .evidence-column,
+  body.rule-page .editor-column {
+    gap: 9px;
+  }
+
+  body.rule-page .section-block {
+    padding: 9px;
+  }
+
+  body.rule-page {
+    --rule-context-textarea-height: 58px;
+    --rule-business-textarea-height: 110px;
+    --matched-generation-block-height: 226px;
+    --matched-shape-profile-block-height: 124px;
+  }
+
+  body.rule-page .evidence-column {
+    grid-template-rows:
+      var(--matched-generation-block-height)
+      var(--matched-shape-profile-block-height)
+      150px
+      minmax(0, 1fr);
+  }
+
+  body.rule-page .editor-column {
+    grid-template-rows: 132px 218px minmax(0, 1fr) 198px;
+  }
+
+  body.rule-page .ontology-search-block .entity-list {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    max-height: none !important;
+  }
+
+  body.rule-page .selected-target-block .metadata-grid {
+    margin: 7px 0 6px;
+  }
+
+  body.rule-page .selected-target-block .field-label {
+    margin: 5px 0 3px;
+  }
+
+  body.rule-page .selected-target-block .textarea {
+    flex-basis: 48px;
+    min-height: 48px;
+  }
+
+  body.rule-page .selected-target-block .full-width {
+    margin-top: 6px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 760px) {
+  body.rule-page .evidence-column,
+  body.rule-page .editor-column {
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  body.rule-page .evidence-column {
+    grid-template-rows:
+      var(--matched-generation-block-height)
+      var(--matched-shape-profile-block-height)
+      150px
+      260px;
+  }
+
+  body.rule-page .editor-column {
+    grid-template-rows: 132px 218px 230px 198px;
+  }
+}
+
+/* Guide workspace on laptop-height desktop viewports. */
+@media (min-width: 1061px) and (max-height: 950px) {
+  body.guide-page .topbar {
+    height: 74px;
+    padding: 8px 24px;
+  }
+
+  body.guide-page .brand-logo-link {
+    --brand-logo-width: clamp(166px, 13vw, 190px);
+  }
+
+  body.guide-page .workspace {
+    height: calc(100dvh - 74px);
+  }
+
+  body.guide-page .rail,
+  body.guide-page .canvas {
+    padding: 10px 12px;
+  }
+
+  body.guide-page .rail {
+    --rail-control-gap: 8px;
+    --rail-label-top: 9px;
+    --rail-label-bottom: 5px;
+    --rail-section-gap: 26px;
+  }
+
+  body.guide-page .rail .session-actions {
+    gap: 10px !important;
+  }
+
+  body.guide-page .rail .custom-model-row {
+    gap: 9px !important;
+  }
+
+  body.guide-page .focus-layout {
+    gap: 9px;
+  }
+
+  body.guide-page .evidence-column,
+  body.guide-page .editor-column {
+    gap: 8px;
+  }
+
+  body.guide-page .section-block {
+    padding: 9px;
+  }
+
+  body.guide-page {
+    --rule-context-textarea-height: 56px;
+    --matched-generation-block-height: 222px;
+    --matched-shape-profile-block-height: 128px;
+  }
+
+  body.guide-page .evidence-column {
+    grid-template-rows:
+      var(--matched-generation-block-height)
+      var(--matched-shape-profile-block-height)
+      202px
+      minmax(0, 1fr);
+  }
+
+  body.guide-page .editor-column {
+    grid-template-rows: 132px 180px minmax(0, 1fr) 108px;
+  }
+
+  body.guide-page .guide-template-block .file-drop {
+    flex: 0 0 48px;
+    min-height: 48px;
+    gap: 2px;
+    padding: 4px 8px;
+    text-align: center;
+  }
+
+  body.guide-page .guide-template-block .file-drop small {
+    line-height: 1.15;
+    text-align: center;
+  }
+
+  body.guide-page .guide-template-block #guide-summary {
+    flex: 0 0 auto;
+    margin-top: 5px;
+  }
+
+  body.guide-page .guide-template-block .template-help {
+    display: grid;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 0;
+    margin-top: 7px;
+    padding: 7px 9px;
+    overflow: hidden;
+  }
+
+  body.guide-page .guide-template-block .template-help p {
+    font-size: 0.75rem;
+    line-height: 1.28;
+  }
+
+  body.guide-page .guide-template-block .template-links {
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-top: 0;
+  }
+
+  body.guide-page .guide-template-block .template-links a {
+    padding: 4px 8px;
+  }
+
+  body.guide-page .guide-template-block .full-width {
+    flex: 0 0 30px;
+    margin-top: 7px;
+  }
+
+  body.guide-page .generated-shapes-block .guide-progress {
+    display: grid;
+    grid-template-columns: minmax(80px, 1fr) minmax(0, 0.8fr);
+    align-items: center;
+    gap: 4px 8px;
+    margin-top: 7px;
+    padding: 6px 8px;
+  }
+
+  body.guide-page .generated-shapes-block .compact-title {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+  }
+
+  body.guide-page .generated-shapes-block > .section-title .tag,
+  body.guide-page .generated-shapes-block .compact-title .tag {
+    padding: 3px 8px;
+    font-size: 0.7rem;
+  }
+
+  body.guide-page .generated-shapes-block .progress-track {
+    grid-column: 1;
+    height: 10px;
+    margin-top: 0;
+  }
+
+  body.guide-page .generated-shapes-block .guide-progress .microcopy {
+    grid-column: 2;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  body.guide-page .generated-shapes-block .generation-controls {
+    margin-top: 3px;
+  }
+
+  body.guide-page .generated-shapes-block .queue-list {
+    margin-top: 6px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 760px) {
+  body.guide-page .evidence-column,
+  body.guide-page .editor-column {
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  body.guide-page .evidence-column {
+    grid-template-rows:
+      var(--matched-generation-block-height)
+      var(--matched-shape-profile-block-height)
+      202px
+      280px;
+  }
+
+  body.guide-page .editor-column {
+    grid-template-rows: 132px 180px 300px 108px;
+  }
+}
+
+@media (min-width: 1061px) and (max-width: 1450px) and (max-height: 950px) {
+  body.guide-page .guide-template-block .template-links span {
+    display: none;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 1100px) {
+  body.rule-page .rail > .namespace-label-row,
+  body.guide-page .rail > .namespace-label-row {
+    margin-top: 12px !important;
+  }
+
+  body.rule-page .rail .model-panel,
+  body.guide-page .rail .model-panel {
+    margin-top: 12px !important;
+  }
+}
+
+/* Keep the split support panel usable after the laptop-specific overrides. */
+@media (min-width: 1061px) and (max-height: 950px) {
+  body.rule-page,
+  body.guide-page {
+    --matched-shape-profile-block-height: 164px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 880px) {
+  body.rule-page .evidence-column,
+  body.rule-page .editor-column,
+  body.guide-page .evidence-column,
+  body.guide-page .editor-column {
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  body.rule-page .evidence-column {
+    grid-template-rows: 206px 164px 150px 260px;
+  }
+
+  body.guide-page .evidence-column {
+    grid-template-rows: 222px 164px 202px 280px;
+  }
+
+  body.rule-page .editor-column {
+    grid-template-rows: 132px 218px 230px 198px;
+  }
+
+  body.guide-page .editor-column {
+    grid-template-rows: 132px 180px 300px 108px;
+  }
+}

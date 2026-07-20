@@ -1,22 +1,13 @@
-# br2shacl-ui — self-contained demo dependencies
+# SHARD core and remote-inference dependencies
 #
 # Core (always required)
 rdflib>=7.0
 pyshacl>=0.26
 
-# Ontology parsing for RDF/XML (.owl/.rdf) support
-rdflib-jsonld; python_version < "3.0"   # no-op placeholder on py3; rdflib handles xml natively
-
-# Mode A + Mode B inference (Databricks via the vendored model_loader)
+# Remote inference and model adapters
 openai>=1.30
 httpx>=0.27
-langchain>=0.2
 langchain-core>=0.2
-langchain-community>=0.2
-langchain-chroma>=0.1
-chromadb>=0.5
 
-# Mode B template parsing + legacy in-memory RAG helpers
+# Business Rules HTML parsing
 beautifulsoup4>=4.12
-Pillow>=10.0
-unstructured>=0.14

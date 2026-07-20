@@ -1,210 +1,221 @@
-# br2shacl-ui
+# SHARD
 
-Self-contained web UI for **text2shacl** — co-construct SHACL validation shapes
-from an OWL ontology and business rules, with a human in the loop.
+**An Interactive Ontology-Grounded SHACL Authoring from Business Rules**
 
-It wraps the real text2shacl pipeline (vendored under `text2shacl_core/`) behind
-four small local services and a two-page frontend. Inference runs through the
-text2shacl `model_loader` and is configured from the **Models** panel in the UI
-(provider, credentials, model ids and temperature).
+SHARD is a local and web application for generating reviewable SHACL shapes
+from an OWL/RDF ontology and business rules written in natural language. It
+keeps a human in the loop: generated Turtle can be inspected, edited,
+validated, accepted and exported.
 
----
+## Workflows
 
-## Two workflows
+### Rule to Shape
 
-The UI is split into two pages, both sharing the same ontology, model
-configuration, prefixes and accepted-shape list (persisted in the browser):
+Write one business rule and resolve its ontology context into focus nodes,
+constrained property paths and related terms. The proposed roles can be
+reviewed manually before SHARD generates one grounded constraint document.
 
-1. **Rule → Shape** (`rule.html`) — write a single business rule, pick the
-   ontology target (or rank related classes/properties directly inside Search
-   ontology), and generate one SHACL shape to edit, validate and accept. Ontology
-   term embeddings are prepared in the background after upload, once model
-   settings are configured, and cached in memory by ontology content hash,
-   embedding model and inference configuration for the service session. Uses
-   the real generator prompts and the rdflib parse-and-retry loop.
+### Batch to Rules
 
-2. **Guide → Shapes** (`guide.html`) — upload a filled Business Rules template
-   (`.html` or `.md`) based on the templates available in the UI. The service
-   validates the template structure, extracts the non-empty business rules,
-   resolves each rule to ontology targets, then generates and **streams shapes by
-   rule** over Server-Sent Events. Progress includes target resolution, generation,
-   validation and unresolved rules. The legacy property-first iteration mode is
-   still available in the backend as a comparative baseline.
+Upload a structured Markdown or HTML batch of business rules. SHARD parses each
+rule, resolves it to role-grouped ontology terms through the `label -> semantic -> LLM`
+cascade, generates one coherent constraint document per resolved rule, and consolidates
+compatible property constraints under target-class NodeShapes. Progress is
+streamed per business rule.
 
-Both workflows can load an Astrea-generated SHACL document. Matching shapes are
-focused to the selected ontology target and supplied to BR2SHACL as structural
-evidence during generation. Loading a baseline does not silently alter the final
-export: the user explicitly chooses one of the output strategies described below.
+Rules that cannot be resolved and generated outputs that fail validation remain
+visible for review; SHARD does not force or silently discard them.
 
----
+## Assurance
 
-## Layout
+Every generated shape is checked at three complementary boundaries:
 
-```
-br2shacl-ui/
-├── run_demo.py                 # starts the 5 services + static web server
-├── requirements.txt
-├── README.md
-├── demo/                       # frontend (static)
-│   ├── index.html              # landing
-│   ├── rule.html  / rule.js    # Workflow 1
-│   ├── guide.html / guide.js   # Workflow 2
-│   ├── templates/              # Business Rules .html/.md upload templates
-│   ├── common.js               # shared state, models, ontology, prefixes, export
-│   └── styles.css
-├── services/
-│   ├── parse_ontology.py       # :9100  parse + detect ontology/shape namespaces + prefixes
-│   ├── find_relevant_terms.py  # :9101  semantic ranking (embeddings) + lexical fallback
-│   ├── build_shacl_shapes.py   # :9102  single-rule generation + /validate-shape
-│   └── generate_from_guide.py  # :9103  template-guided generation, streamed (SSE)
-└── text2shacl_core/            # vendored text2shacl (the real pipeline)
-    ├── model_loader*.py · runtime_config.py · utils.py · prompts.py · Logger.py
-    ├── preprocess_html*.py · multiagent.py · rag.py
-    ├── ns_utils.py             # NEW: generic namespace/prefix derivation
-    ├── rag_inmemory.py         # NEW: in-memory RAG (no Redis) for Mode B
-    ├── multiagent_stream.py    # NEW: streaming, generic generation
-    └── prompts/ (multiagent.json · rag.json)
-```
+1. Turtle/RDF syntax.
+2. Generic SHACL for SHACL validation with the bundled W3C `shacl-shacl.ttl`.
+3. Optional user-supplied domain profiles.
 
-### Relation to text2shacl
+Domain profiles are never inferred from an ontology. For example, the ERA
+profile under `profiles/era/` is opt-in and must not be applied to unrelated
+domains.
 
-`text2shacl_core/` is a vendored copy of the original source, kept intact except
-for three surgical edits so the demo runs self-contained without a GPU or Redis:
+SHARD also checks key SHACL IRIs against the uploaded ontology. When enabled,
+SHARD sends the ontology content to the Astrea REST API and uses the returned
+SHACL document as rule-focused structural evidence, as a final merge input,
+or both. Reviewed output can be exported with generated-shape priority or with
+the restrictive RDF-aware merge strategy. If Astrea is unavailable, the UI
+falls back to no Astrea use and keeps the SHARD workflow available.
 
-* `utils.py` — removed the dead `from enrich_sparql_constraints import enrich`
-  import (`enrich()` is defined locally).
-* `model_loader.py` — routes by the provider selected in the UI, with the old
-  HuggingFace-by-slash heuristic as fallback.
-* `model_loader_databricks.py` — accepts UI-supplied Databricks credentials and
-  converts visible AI Gateway model names such as `gemma-3-12b` into the
-  `system.ai.*` identifiers expected by the Databricks OpenAI-compatible API.
-* `multiagent.py` — `torch.cuda.empty_cache()` is guarded by
-  `torch.cuda.is_available()`.
+The Astrea endpoint defaults to `https://astrea.linkeddata.es/api/shacl/document`.
+Self-hosted deployments can set `SHARD_ASTREA_API_URL`; the request timeout can
+be changed with `SHARD_ASTREA_TIMEOUT` (seconds).
 
-Genericity (any ontology, not just ERA) is added in `ns_utils.py`: the primary
-ontology namespace is selected by class/property coverage, while the generated
-shape namespace is tracked separately. Generic prefix blocks preserve the
-ontology's declarations, infer conventional aliases only for known vocabularies
-that are actually used, and add `onto:` only when the primary namespace has no
-named source prefix. Shape subjects use one configurable preferred prefix,
-defaulting to `shape:`. The ERA aliases required by the historical prompts are
-confined to the optional property-first legacy pipeline.
+## Run Locally
 
-The Guide rule-first workflow avoids the old property-driven RAG loop: each
-business rule is the primary evidence passed to the shared shape builder after
-target resolution. The legacy property-first mode continues to use the in-memory
-docstore and ephemeral Chroma implementation in `rag_inmemory.py`.
-
----
-
-## Setup
+Python 3.10 or newer is required.
 
 ```bash
-python3 -m pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python run_demo.py
 ```
 
-No `.env` file is required or read by `run_demo.py`. Configure inference from the
-**Models** panel in either workflow page:
+Open <http://127.0.0.1:8768/>.
 
-1. Choose **Databricks** or **Hugging Face (local)**.
-2. For Databricks, paste the AI Gateway / Serving base URL and token.
-3. For Hugging Face, paste a token only if the selected model is gated/private.
-4. Select model ids per role or add a custom model manually.
-5. Adjust temperature.
+The UI exposes neutral remote/local inference choices and model settings. A
+remote deployment reads its endpoint and credentials from
+`DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN`; these secrets are not displayed or
+stored in the browser. Programmatic API clients may still supply request-scoped
+credentials. The normal user flow does not require a `.env` file.
 
-The Databricks catalog shows the short AI Gateway names visible in the Databricks
-UI (`gemma-3-12b`, `qwen3-embedding-0-6b`, etc.). Requests are sent internally as
-`system.ai.*` model ids. Hugging Face keeps its repository-style ids (`org/model`).
-The UI validates a custom model before adding it.
-
-> Selecting the **Hugging Face (local)** backend runs inference locally and additionally
-> requires `torch`, `transformers`, and `sentence-transformers` (and,
-> realistically, a GPU for the large models). These are intentionally **not** in
-> `requirements.txt`; the Databricks backend needs neither.
-
-Install the optional local inference dependencies with:
+The package can also be installed in editable mode:
 
 ```bash
-python3 -m pip install -r requirements-local.txt
+python -m pip install -e .
+shard
 ```
 
-Run the lightweight local-inference smoke test with public tiny models:
+### Local inference
+
+Install the optional local dependencies:
 
 ```bash
-python3 test/smoke_huggingface_local.py
-python3 test/smoke_huggingface_local.py --offline
+python -m pip install -r requirements-local.txt
+# equivalent after packaging:
+python -m pip install -e '.[local]'
 ```
 
-The first run downloads less than 20 MB across the chat, embedding, and vision
-test models. The test checks plumbing, cache reuse, and CPU execution; these
-tiny models are not suitable for judging generation, ranking, or image
-understanding quality.
-
----
-
-## Run
+No model is selected or downloaded automatically. When a model is selected in
+the local UI, SHARD checks the local cache and asks for confirmation before an
+explicit download, whose progress is shown in the model panel. A small backend
+smoke test is available at:
 
 ```bash
-python3 run_demo.py
+python scripts/smoke_huggingface.py
 ```
 
-The default `local` deployment profile enables both backends. For a hosted
-deployment, start the same codebase with:
+### Public deployment policy
+
+The public profile prevents server-side local-model execution while retaining
+remote inference:
 
 ```bash
-python3 run_demo.py --deployment-profile public
+python run_demo.py --deployment-profile public --host 0.0.0.0
 ```
 
-The `public` profile keeps Databricks remote inference available and disables
-local Hugging Face execution. The UI shows a link to the
-[`citiususc/br2shacl-ui`](https://github.com/citiususc/br2shacl-ui) repository,
-and backend services reject forged Hugging Face requests with HTTP `403`.
-This flag controls application capabilities; exposing the UI over HTTPS and
-routing its local service ports remain deployment/reverse-proxy concerns.
+This is an application policy, not a complete production perimeter. Put public
+deployments behind HTTPS, authentication where appropriate, request limits and
+a reverse proxy. Expose the unified web port only.
 
-Then open:
+## Examples
 
-* Landing:        http://127.0.0.1:8768/index.html
-* Rule → Shape:   http://127.0.0.1:8768/rule.html
-* Guide → Shapes: http://127.0.0.1:8768/guide.html
+Two domains are included:
 
-`Ctrl+C` stops the web server and all five services.
+- `examples/asset-maintenance/`: general non-ERA ontology, rules, context and a
+  sample validation profile.
+- `examples/era-rinf/`: compact ERA/RINF ontology and Business Rules fixtures.
 
----
+The generic SHACL for SHACL profile is packaged at
+`src/shard/resources/validation/shacl-shacl.ttl`. The ERA-specific profile is
+kept separately at `profiles/era/era-shacl-shacl.ttl`.
 
-## Notes
+## Architecture
 
-* **Backends & models.** The Inference backend toggle (Databricks / Hugging Face local)
-  drives which models appear in each dropdown, split by role: chat/generation and
-  embedding (term ranking and RAG indexing). Databricks endpoint names must match
-  those deployed in your workspace; if validation fails, pick a model that is
-  **Ready** in your Serving tab.
-* **First call latency.** The first embedding/generation call is slow (model
-  warm-up + Databricks rate throttling). Subsequent calls reuse cached objects;
-  the term-ranking service caches the entity embedding matrix per ontology and
-  inference configuration. If Databricks token/base URL are missing, semantic
-  ranking is not started and the UI shows that model settings must be configured.
-* **Guide templates.** The Guide workflow only accepts `.html`, `.htm`, `.md` or
-  `.markdown` files that keep the required Business Rules rule-section
-  structure. Metadata fields are optional and are not used to decide whether the
-  template is valid. PDFs and arbitrary HTML/Markdown guides are rejected before
-  generation.
-* **Export.** "Export accepted shapes" writes a single `.ttl` combining the
-   editable prefix block, the aggregated `sh:NodeShape` block (guide workflow) and
-   every accepted shape body. With an Astrea baseline loaded, the final output
-   strategy can be selected explicitly:
-   * **No merge** exports only the reviewed BR2SHACL shapes. Astrea may still have
-     been used as generation evidence.
-   * **Priority LLM** keeps BR2SHACL for covered `sh:path` / `sh:targetClass`
-     targets and uses Astrea only for targets absent from the generated output.
-   * **Restrictive** combines matching shapes and keeps the strongest compatible
-     constraints from both sources; incompatible datatype/class choices keep the
-     generated value and are reported as merge warnings.
-   Merged output is parsed and validated against the generic SHACL2SHACL profile
-   plus any domain profiles loaded by the user before it is downloaded.
-* **Session import/export.** "Export session" saves the loaded ontology, editable
-   prefixes, accepted shapes, Astrea baseline/strategy and non-sensitive model
-   settings. It intentionally excludes tokens and workspace URLs.
-* The browser-side validation "Check" button calls a real rdflib parse on
-  `:9102/validate-shape` — it is not a heuristic.
+SHARD exposes one versioned application API and models five logical capability
+boundaries: ontology catalog and retrieval, business rule grounding, shape
+generation, shape assurance and baseline integration, and authoring workflow
+orchestration. These are scientific and API responsibilities, not a requirement
+to deploy five operating-system services.
+
+The default runtime uses one process and one same-origin API. Loopback listeners
+on ports `9100` through `9104` preserve the former endpoint paths for local
+compatibility. The optional `split` layout runs those adapters as separate
+processes for comparative experiments; all routes still call the same
+application functions.
+
+See [architecture](docs/architecture.md), [HTTP API](docs/api.md), and
+[deployment](docs/deployment.md).
+
+## Repository Layout
+
+```text
+src/shard/
+  domain/          business-rule and ontology concepts
+  application/     resolution, generation, validation and orchestration
+  inference/       Databricks and local Hugging Face adapters
+  baselines/       Astrea parsing, evidence selection and merge strategies
+  api/             versioned contract and HTTP/SSE adapters
+  deployment/      hosted/local capability policy
+  observability/   request-scoped execution logging
+  resources/       generic prompts and validation resources
+frontend/          static HTML, modular JavaScript and CSS
+profiles/          opt-in domain validation profiles
+examples/          runnable domain fixtures
+experiments/       reproducible research diagnostics
+scripts/           operational and smoke-test scripts
+tests/             unit and integration tests
+docs/              architecture, API and deployment documentation
 ```
+
+The Python package uses a `src/` layout so imports always resolve through the
+installed `shard` package instead of depending on the current directory.
+
+## API
+
+The canonical API is under `/api/v1`. Complete workflows for external clients
+are available as single JSON requests:
+
+- `POST /api/v1/workflows/rule-to-shape`
+- `POST /api/v1/workflows/guide-to-shapes`
+
+The existing SSE and fine-grained operations remain available:
+
+- `POST /api/v1/ontology/parse`
+- `POST /api/v1/ontology/search`
+- `POST /api/v1/rules/resolve-targets`
+- `POST /api/v1/shapes/build`
+- `POST /api/v1/shapes/validate`
+- `POST /api/v1/baselines/astrea`
+- `POST /api/v1/shapes/merge`
+- `POST /api/v1/models/local/status`
+- `POST /api/v1/models/local/download` (SSE)
+- `POST /api/v1/guides/generate` (SSE)
+- `GET /api/v1`
+- `GET /api/v1/docs` (Swagger UI)
+- `GET /api/v1/openapi.json`
+- `GET /api/v1/capabilities`
+- `GET /api/v1/health`
+
+Canonical responses expose non-secret request provenance and `X-SHARD-*`
+headers. Pre-rename `X-BR2SHACL-*` headers and environment aliases remain
+accepted during API v1 for compatibility.
+
+See the [API guide](docs/api.md), the live Swagger UI and OpenAPI 3.1
+document, and the standard-library clients in [`examples/api`](examples/api).
+
+## Target-Resolution Experiment
+
+The deterministic diagnostic requires no external credentials:
+
+```bash
+python experiments/target_resolution/evaluate.py --mode injected --case all
+```
+
+For real Databricks measurement, export explicit variables and select real
+mode. Canonical names are `SHARD_PROVIDER`, `SHARD_EMBEDDING_MODEL`, and
+`SHARD_LLM_MODEL`; the former `BR2SHACL_*` names remain aliases. Databricks
+credentials use `DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN`. Tokens are never
+printed by the diagnostic.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+for file in frontend/js/*.js; do node --check "$file"; done
+git diff --check
+```
+
+## Citation and License
+
+Citation metadata is provided in [`CITATION.cff`](CITATION.cff). SHARD is
+released under the [MIT License](LICENSE).

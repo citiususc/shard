@@ -1,0 +1,70 @@
+/* SHARD Turtle editor. */
+
+/* ─────────────── Turtle code editor (IDE-like, overlay) ─────────────── */
+.code-wrap { position: relative; margin-top: 12px; }
+.code-wrap .code-editor { margin-top: 0; }
+
+.code-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 16px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  font-weight: 400;
+  font-style: normal;
+  font-variant-ligatures: none;
+  font-synthesis: none;
+  letter-spacing: normal;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  box-sizing: border-box;
+  tab-size: 2;
+}
+.code-highlight code {
+  display: block;
+  min-width: max-content;
+  font: inherit;
+  color: inherit;
+  white-space: pre;
+}
+
+.code-wrap .code-editor {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: #e6edf3;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  overflow: auto;
+  tab-size: 2;
+  font-weight: 400;
+  font-style: normal;
+  font-variant-ligatures: none;
+  font-synthesis: none;
+  letter-spacing: normal;
+}
+.code-wrap .code-editor::selection { background: rgba(120,160,255,0.35); }
+
+/* Token theme (GitHub-dark-ish, tuned for RDF Turtle) */
+.tk-comment   { color: #8b949e; }
+.tk-string    { color: #a5d6ff; }
+.tk-iri       { color: #7ee787; }
+.tk-directive { color: #ff7b72; }
+.tk-pname     { color: #d2a8ff; }
+.tk-kw        { color: #ff7b72; }
+.tk-bool      { color: #79c0ff; }
+.tk-num       { color: #79c0ff; }
+.tk-lang      { color: #ffa657; }
+.tk-op        { color: #ff7b72; }
+.tk-punc      { color: #8b949e; }
