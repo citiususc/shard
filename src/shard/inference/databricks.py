@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import Runnable
 
 from shard.observability import logger
+from shard.deployment.operational import operational_settings
 from .context import get_databricks_base_url, get_databricks_token
 
 # ---------------------------------------------------------------------------
@@ -69,12 +70,26 @@ def _get_credentials() -> Tuple[str, str]:
 _OAI_CLIENTS: Dict[Tuple[str, str], OpenAI] = {}
 
 
+def _http_timeout() -> httpx.Timeout:
+    settings = operational_settings()
+    return httpx.Timeout(
+        connect=settings.http_connect_timeout_seconds,
+        read=settings.model_timeout_seconds,
+        write=settings.http_read_timeout_seconds,
+        pool=settings.http_connect_timeout_seconds,
+    )
+
+
 def _oai_client() -> OpenAI:
     token, base_url = _get_credentials()
     key = (base_url, token)
     if key not in _OAI_CLIENTS:
         logger.debug("Initializing OpenAI-compatible client for Databricks embeddings.")
-        _OAI_CLIENTS[key] = OpenAI(api_key=token, base_url=base_url)
+        _OAI_CLIENTS[key] = OpenAI(
+            api_key=token,
+            base_url=base_url,
+            timeout=_http_timeout(),
+        )
     return _OAI_CLIENTS[key]
 
 # ---------------------------------------------------------------------------
@@ -207,7 +222,7 @@ class _DatabricksChatRunnable(Runnable):
                     "Content-Type":  "application/json",
                 },
                 json=payload,
-                timeout=120,
+                timeout=_http_timeout(),
             )
 
             if response.status_code == 200:

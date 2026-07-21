@@ -16,7 +16,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from shard.application.baseline_generation import generate_astrea_baseline  # noqa: E402
 from shard.integrations.astrea import (  # noqa: E402
+    AstreaRateLimitError,
     AstreaResponseError,
+    AstreaTimeoutError,
     AstreaUnavailableError,
     generate_astrea_shapes,
 )
@@ -80,6 +82,20 @@ class AstreaClientTests(unittest.TestCase):
         with httpx.Client(transport=httpx.MockTransport(fail)) as client:
             with self.assertRaises(AstreaUnavailableError):
                 generate_astrea_shapes(ONTOLOGY, client=client)
+
+    def test_rate_limit_and_timeout_are_reported_distinctly(self):
+        cases = [
+            (429, AstreaRateLimitError),
+            (504, AstreaTimeoutError),
+        ]
+        for status, error_type in cases:
+            with self.subTest(status=status):
+                transport = httpx.MockTransport(
+                    lambda request: httpx.Response(status, text="upstream", request=request)
+                )
+                with httpx.Client(transport=transport) as client:
+                    with self.assertRaises(error_type):
+                        generate_astrea_shapes(ONTOLOGY, client=client)
 
     def test_invalid_or_shapeless_response_is_rejected(self):
         responses = ["not turtle", "@prefix ex: <urn:test:> . ex:item ex:value ex:other ."]

@@ -177,7 +177,7 @@ eshsh:ScopeValue
 
 eshsh:RinfIndexValue
     a sh:NodeShape ;
-    rdfs:comment "era:rinfIndex is a string pointer into the RINF Application Guide." ;
+    rdfs:comment "era:rinfIndex is a string pointer into the RINF application documentation." ;
     sh:targetObjectsOf era:rinfIndex ;
     sh:datatype xsd:string ;
     sh:pattern "[0-9]" ;

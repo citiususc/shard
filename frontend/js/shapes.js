@@ -21,10 +21,19 @@ function removeAccepted(id) {
   setAccepted(getAccepted().filter((s) => s.id !== id));
   notifyAcceptedShapesChanged({ action: "remove", id });
 }
+function removeAllAccepted() {
+  const count = getAccepted().length;
+  if (!count) return 0;
+  setAccepted([]);
+  notifyAcceptedShapesChanged({ action: "remove_all", count });
+  return count;
+}
 
 function renderAccepted(listEl, countEl) {
   const list = getAccepted();
   if (countEl) countEl.textContent = `${list.length} accepted`;
+  const removeAllButton = byId("remove-all-accepted-shapes");
+  if (removeAllButton) removeAllButton.disabled = list.length === 0;
   if (!listEl) return;
   listEl.innerHTML = "";
   list.forEach((s) => {
@@ -36,6 +45,21 @@ function renderAccepted(listEl, countEl) {
     del.addEventListener("click", () => { removeAccepted(s.id); renderAccepted(listEl, countEl); });
     row.appendChild(del);
     listEl.appendChild(row);
+  });
+}
+
+function wireAcceptedShapesControls(listEl, countEl, removeAllButton) {
+  if (!removeAllButton) return;
+  removeAllButton.addEventListener("click", () => {
+    const count = getAccepted().length;
+    if (!count) return;
+    const noun = count === 1 ? "shape" : "shapes";
+    if (!window.confirm(
+      `Remove all ${count} accepted ${noun}? This action cannot be undone.`
+    )) return;
+    const removed = removeAllAccepted();
+    renderAccepted(listEl, countEl);
+    setStatus(`${removed} accepted ${noun} removed`);
   });
 }
 
@@ -125,8 +149,8 @@ function wireShapeValidationProfileControls() {
 }
 
 /* ---------- Astrea baseline evidence + final merge ---------- */
-const ASTREA_USE_MODES = new Set(["none", "baseline", "merge", "both"]);
-const ASTREA_MERGE_TECHNIQUES = new Set(["priority-llm", "restrictive"]);
+const ASTREA_USE_MODES = new Set(["none", "evidence", "merge", "evidence-and-merge"]);
+const ASTREA_MERGE_TECHNIQUES = new Set(["generated-priority", "restrictive"]);
 let astreaGenerationPromise = null;
 let astreaControlState = "idle";
 let astreaControlMessage = "";
@@ -134,7 +158,7 @@ let astreaControlMessage = "";
 function getAstreaBaseline() { return loadJSON(STORE.astreaBaseline, null); }
 function setAstreaBaseline(value) {
   if (value && value.content) saveJSON(STORE.astreaBaseline, value);
-  else localStorage.removeItem(STORE.astreaBaseline);
+  else removeStoredValue(STORE.astreaBaseline);
 }
 
 function migrateLegacyAstreaSettings() {
@@ -142,7 +166,7 @@ function migrateLegacyAstreaSettings() {
     const legacyMode = localStorage.getItem(STORE.astreaMergeMode) || "none";
     const hasBaseline = Boolean(getAstreaBaseline() && getAstreaBaseline().content);
     const useMode = hasBaseline
-      ? (ASTREA_MERGE_TECHNIQUES.has(legacyMode) ? "both" : "baseline")
+      ? (ASTREA_MERGE_TECHNIQUES.has(legacyMode) ? "evidence-and-merge" : "evidence")
       : "none";
     localStorage.setItem(STORE.astreaUseMode, useMode);
   }
@@ -150,14 +174,16 @@ function migrateLegacyAstreaSettings() {
     const legacyMode = localStorage.getItem(STORE.astreaMergeMode) || "";
     const technique = ASTREA_MERGE_TECHNIQUES.has(legacyMode)
       ? legacyMode
-      : "priority-llm";
+      : "generated-priority";
     localStorage.setItem(STORE.astreaMergeTechnique, technique);
   }
 }
 
 function getAstreaUseMode() {
   migrateLegacyAstreaSettings();
-  const value = localStorage.getItem(STORE.astreaUseMode) || "none";
+  const stored = localStorage.getItem(STORE.astreaUseMode) || "none";
+  const value = ({ baseline: "evidence", both: "evidence-and-merge" })[stored] || stored;
+  if (value !== stored) localStorage.setItem(STORE.astreaUseMode, value);
   return ASTREA_USE_MODES.has(value) ? value : "none";
 }
 function setAstreaUseMode(value, { render = true } = {}) {
@@ -168,20 +194,22 @@ function setAstreaUseMode(value, { render = true } = {}) {
 }
 function getAstreaMergeTechnique() {
   migrateLegacyAstreaSettings();
-  const value = localStorage.getItem(STORE.astreaMergeTechnique) || "priority-llm";
-  return ASTREA_MERGE_TECHNIQUES.has(value) ? value : "priority-llm";
+  const stored = localStorage.getItem(STORE.astreaMergeTechnique) || "generated-priority";
+  const value = stored === "priority-llm" ? "generated-priority" : stored;
+  if (value !== stored) localStorage.setItem(STORE.astreaMergeTechnique, value);
+  return ASTREA_MERGE_TECHNIQUES.has(value) ? value : "generated-priority";
 }
 function setAstreaMergeTechnique(value, { render = true } = {}) {
-  const normalized = ASTREA_MERGE_TECHNIQUES.has(value) ? value : "priority-llm";
+  const normalized = ASTREA_MERGE_TECHNIQUES.has(value) ? value : "generated-priority";
   localStorage.setItem(STORE.astreaMergeTechnique, normalized);
   if (render) renderAstreaBaselineControls();
   return normalized;
 }
 function astreaUsesEvidence(mode = getAstreaUseMode()) {
-  return mode === "baseline" || mode === "both";
+  return mode === "evidence" || mode === "evidence-and-merge";
 }
 function astreaUsesMerge(mode = getAstreaUseMode()) {
-  return mode === "merge" || mode === "both";
+  return mode === "merge" || mode === "evidence-and-merge";
 }
 
 // Compatibility for version-1 sessions that stored merge and use as one value.
@@ -316,11 +344,7 @@ async function ensureAstreaBaseline() {
     try {
       const result = await fetchJSON(SERVICES.astrea, {
         method: "POST",
-        body: JSON.stringify({
-          ontology_content: ontology.content,
-          ontology_filename: ontology.filename || "ontology.ttl",
-          ontology_hash: ontology.contentHash,
-        }),
+        body: JSON.stringify({ ontology: apiOntologyInput(ontology) }),
       }, { label: "Generate Astrea baseline", timeoutMs: 150000 });
       if (!result.available || !result.shape_document) {
         throw new Error(result.error || "Astrea returned no baseline shapes.");
@@ -375,6 +399,7 @@ async function refreshAstreaBaselineForOntology() {
   if (getAstreaBaseline() && !currentAstreaBaseline()) setAstreaBaseline(null);
   setAstreaControlMessage("", "idle");
   renderAstreaBaselineControls();
+  if (!getOntology()) return null;
   if (getAstreaUseMode() !== "none") return ensureAstreaBaseline();
   return null;
 }
@@ -423,6 +448,22 @@ function validationScopeLabel(data = {}) {
     return `syntax + generic SHACL for SHACL + profile: ${domainNames.join(", ") || `${domainCount} file${domainCount === 1 ? "" : "s"}`}`;
   }
   return activeValidationScopeLabel();
+}
+
+function semanticReviewSummary(data = {}) {
+  const review = data.semantic_review || data.semanticReview || {};
+  if (review.status !== "passed") return "Semantic review not passed";
+  const checks = Number(review.critic_calls || 0);
+  const corrections = Number(review.correction_count || 0);
+  return `Semantic critique passed · ${checks} check(s) · ${corrections} correction(s)`;
+}
+
+function semanticReviewDetails(data = {}) {
+  const review = data.semantic_review || data.semanticReview || {};
+  return (review.issues || []).map((issue) => {
+    const path = issue.path ? `${issue.path}: ` : "";
+    return `${issue.code || "SEMANTIC_REVIEW_ISSUE"} · ${path}${issue.message || ""}`;
+  }).join("\n");
 }
 
 function validationResultMessage(data) {

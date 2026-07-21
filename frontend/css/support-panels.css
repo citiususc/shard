@@ -79,7 +79,7 @@
 
 .astrea-baseline-status {
   min-width: 0;
-  margin: 6px 0 0;
+  margin: 10px 0 0;
   font-size: 0.68rem;
   line-height: 1.25;
 }
@@ -96,17 +96,17 @@
 
 @media (min-width: 1061px) {
   body.rule-page,
-  body.guide-page {
+  body.batch-page {
     --matched-shape-profile-block-height: clamp(184px, 16.5vh, 204px);
   }
 
   body.rule-page .shape-profile-block,
-  body.guide-page .shape-profile-block {
+  body.batch-page .shape-profile-block {
     padding: 10px;
   }
 
   body.rule-page .shape-support-pane .profile-file-drop,
-  body.guide-page .shape-support-pane .profile-file-drop {
+  body.batch-page .shape-support-pane .profile-file-drop {
     flex-basis: 38px;
     min-height: 38px;
     padding: 5px 8px;
@@ -117,31 +117,32 @@
   }
 
   body.rule-page .shape-support-pane .profile-file-drop,
-  body.guide-page .shape-support-pane .profile-file-drop,
+  body.batch-page .shape-support-pane .profile-file-drop,
   body.rule-page .shape-support-pane .profile-file-drop span,
   body.rule-page .shape-support-pane .profile-file-drop small,
-  body.guide-page .shape-support-pane .profile-file-drop span,
-  body.guide-page .shape-support-pane .profile-file-drop small {
+  body.batch-page .shape-support-pane .profile-file-drop span,
+  body.batch-page .shape-support-pane .profile-file-drop small {
     min-width: 0;
   }
 
   body.rule-page .shape-support-pane .profile-file-drop small,
-  body.guide-page .shape-support-pane .profile-file-drop small {
-    overflow: hidden;
-    font-size: 0.62rem;
+  body.batch-page .shape-support-pane .profile-file-drop small {
+    overflow: visible;
+    font-size: 0.6rem;
     line-height: 1.1;
-    text-overflow: ellipsis;
+    text-overflow: clip;
+    white-space: nowrap;
   }
 
   body.rule-page .shape-support-pane .profile-file-list,
-  body.guide-page .shape-support-pane .profile-file-list {
+  body.batch-page .shape-support-pane .profile-file-list {
     margin-top: 5px;
   }
 }
 
 @media (min-width: 1061px) and (max-height: 880px) {
   body.rule-page,
-  body.guide-page {
+  body.batch-page {
     --matched-shape-profile-block-height: 178px;
   }
 
@@ -211,7 +212,7 @@
   }
 
   body.rule-page .rail .session-actions {
-    gap: 10px !important;
+    gap: 6px !important;
   }
 
   body.rule-page .rail .custom-model-row {
@@ -219,8 +220,7 @@
   }
 
   body.rule-page .focus-layout,
-  body.rule-page .evidence-column,
-  body.rule-page .editor-column {
+  body.rule-page .evidence-column {
     gap: 9px;
   }
 
@@ -243,8 +243,9 @@
       minmax(0, 1fr);
   }
 
-  body.rule-page .editor-column {
-    grid-template-rows: 132px 218px minmax(0, 1fr) 198px;
+  body.rule-page .editor-column,
+  body.batch-page .editor-column {
+    grid-template-rows: 110px 160px minmax(230px, 1fr) 195px;
   }
 
   body.rule-page .ontology-search-block .entity-list {
@@ -273,8 +274,7 @@
 }
 
 @media (min-width: 1061px) and (max-height: 760px) {
-  body.rule-page .evidence-column,
-  body.rule-page .editor-column {
+  body.rule-page .evidence-column {
     align-content: start;
     overflow-x: hidden;
     overflow-y: auto;
@@ -290,66 +290,62 @@
       260px;
   }
 
-  body.rule-page .editor-column {
-    grid-template-rows: 132px 218px 230px 198px;
-  }
 }
 
-/* Guide workspace on laptop-height desktop viewports. */
+/* Batch workspace on laptop-height desktop viewports. */
 @media (min-width: 1061px) and (max-height: 950px) {
-  body.guide-page .topbar {
+  body.batch-page .topbar {
     height: 74px;
     padding: 8px 24px;
   }
 
-  body.guide-page .brand-logo-link {
+  body.batch-page .brand-logo-link {
     --brand-logo-width: clamp(166px, 13vw, 190px);
   }
 
-  body.guide-page .workspace {
+  body.batch-page .workspace {
     height: calc(100dvh - 74px);
   }
 
-  body.guide-page .rail,
-  body.guide-page .canvas {
+  body.batch-page .rail,
+  body.batch-page .canvas {
     padding: 10px 12px;
   }
 
-  body.guide-page .rail {
+  body.batch-page .rail {
     --rail-control-gap: 8px;
     --rail-label-top: 9px;
     --rail-label-bottom: 5px;
     --rail-section-gap: 26px;
   }
 
-  body.guide-page .rail .session-actions {
-    gap: 10px !important;
+  body.batch-page .rail .session-actions {
+    gap: 6px !important;
   }
 
-  body.guide-page .rail .custom-model-row {
+  body.batch-page .rail .custom-model-row {
     gap: 9px !important;
   }
 
-  body.guide-page .focus-layout {
+  body.batch-page .focus-layout {
     gap: 9px;
   }
 
-  body.guide-page .evidence-column,
-  body.guide-page .editor-column {
+  body.batch-page .evidence-column {
     gap: 8px;
   }
 
-  body.guide-page .section-block {
+  body.batch-page .section-block {
     padding: 9px;
   }
 
-  body.guide-page {
+  body.batch-page {
     --rule-context-textarea-height: 56px;
     --matched-generation-block-height: 222px;
     --matched-shape-profile-block-height: 128px;
   }
 
-  body.guide-page .evidence-column {
+  body.batch-page .evidence-column {
     grid-template-rows:
       var(--matched-generation-block-height)
       var(--matched-shape-profile-block-height)
@@ -357,11 +353,11 @@
       minmax(0, 1fr);
   }
 
-  body.guide-page .editor-column {
-    grid-template-rows: 132px 180px minmax(0, 1fr) 108px;
+  body.batch-page .editor-column {
+    grid-template-rows: 110px 160px minmax(230px, 1fr) 195px;
   }
 
-  body.guide-page .guide-template-block .file-drop {
+  body.batch-page .batch-template-block .file-drop {
     flex: 0 0 48px;
     min-height: 48px;
     gap: 2px;
@@ -369,17 +365,17 @@
     text-align: center;
   }
 
-  body.guide-page .guide-template-block .file-drop small {
+  body.batch-page .batch-template-block .file-drop small {
     line-height: 1.15;
     text-align: center;
   }
 
-  body.guide-page .guide-template-block #guide-summary {
+  body.batch-page .batch-template-block #batch-summary {
     flex: 0 0 auto;
     margin-top: 5px;
   }
 
-  body.guide-page .guide-template-block .template-help {
+  body.batch-page .batch-template-block .template-help {
     display: grid;
     flex: 1 1 auto;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -391,72 +387,43 @@
     overflow: hidden;
   }
 
-  body.guide-page .guide-template-block .template-help p {
+  body.batch-page .batch-template-block .template-help p {
     font-size: 0.75rem;
     line-height: 1.28;
   }
 
-  body.guide-page .guide-template-block .template-links {
+  body.batch-page .batch-template-block .template-links {
     flex-wrap: nowrap;
     gap: 6px;
     margin-top: 0;
   }
 
-  body.guide-page .guide-template-block .template-links a {
+  body.batch-page .batch-template-block .template-links a {
     padding: 4px 8px;
   }
 
-  body.guide-page .guide-template-block .full-width {
+  body.batch-page .batch-template-block .full-width {
     flex: 0 0 30px;
     margin-top: 7px;
   }
 
-  body.guide-page .generated-shapes-block .guide-progress {
-    display: grid;
-    grid-template-columns: minmax(80px, 1fr) minmax(0, 0.8fr);
-    align-items: center;
-    gap: 4px 8px;
-    margin-top: 7px;
-    padding: 6px 8px;
-  }
-
-  body.guide-page .generated-shapes-block .compact-title {
-    grid-column: 1 / -1;
-    margin-bottom: 0;
-  }
-
-  body.guide-page .generated-shapes-block > .section-title .tag,
-  body.guide-page .generated-shapes-block .compact-title .tag {
+  body.batch-page .generated-shapes-block > .section-title .tag {
     padding: 3px 8px;
     font-size: 0.7rem;
   }
 
-  body.guide-page .generated-shapes-block .progress-track {
-    grid-column: 1;
-    height: 10px;
-    margin-top: 0;
+  body.batch-page .generated-shapes-block .batch-progress-heading {
+    flex: 1 1 auto;
+    max-width: min(78%, 440px);
   }
 
-  body.guide-page .generated-shapes-block .guide-progress .microcopy {
-    grid-column: 2;
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  body.guide-page .generated-shapes-block .generation-controls {
-    margin-top: 3px;
-  }
-
-  body.guide-page .generated-shapes-block .queue-list {
+  body.batch-page .generated-shapes-block .queue-list {
     margin-top: 6px;
   }
 }
 
 @media (min-width: 1061px) and (max-height: 760px) {
-  body.guide-page .evidence-column,
-  body.guide-page .editor-column {
+  body.batch-page .evidence-column {
     align-content: start;
     overflow-x: hidden;
     overflow-y: auto;
@@ -464,7 +431,7 @@
     scrollbar-gutter: stable;
   }
 
-  body.guide-page .evidence-column {
+  body.batch-page .evidence-column {
     grid-template-rows:
       var(--matched-generation-block-height)
       var(--matched-shape-profile-block-height)
@@ -472,25 +439,22 @@
       280px;
   }
 
-  body.guide-page .editor-column {
-    grid-template-rows: 132px 180px 300px 108px;
-  }
 }
 
 @media (min-width: 1061px) and (max-width: 1450px) and (max-height: 950px) {
-  body.guide-page .guide-template-block .template-links span {
+  body.batch-page .batch-template-block .template-links span {
     display: none;
   }
 }
 
 @media (min-width: 1061px) and (max-height: 1100px) {
   body.rule-page .rail > .namespace-label-row,
-  body.guide-page .rail > .namespace-label-row {
+  body.batch-page .rail > .namespace-label-row {
     margin-top: 12px !important;
   }
 
   body.rule-page .rail .model-panel,
-  body.guide-page .rail .model-panel {
+  body.batch-page .rail .model-panel {
     margin-top: 12px !important;
   }
 }
@@ -498,7 +462,7 @@
 /* Keep the split support panel usable after the laptop-specific overrides. */
 @media (min-width: 1061px) and (max-height: 950px) {
   body.rule-page,
-  body.guide-page {
+  body.batch-page {
     --matched-shape-profile-block-height: 164px;
   }
 }
@@ -506,8 +470,8 @@
 @media (min-width: 1061px) and (max-height: 880px) {
   body.rule-page .evidence-column,
   body.rule-page .editor-column,
-  body.guide-page .evidence-column,
-  body.guide-page .editor-column {
+  body.batch-page .evidence-column,
+  body.batch-page .editor-column {
     align-content: start;
     overflow-x: hidden;
     overflow-y: auto;
@@ -519,15 +483,180 @@
     grid-template-rows: 206px 164px 150px 260px;
   }
 
-  body.guide-page .evidence-column {
+  body.batch-page .evidence-column {
     grid-template-rows: 222px 164px 202px 280px;
   }
 
-  body.rule-page .editor-column {
-    grid-template-rows: 132px 218px 230px 198px;
+  body.rule-page .editor-column,
+  body.batch-page .editor-column {
+    grid-template-rows: 90px 145px minmax(230px, 1fr) 190px;
+  }
+}
+
+/* Keep the shared review stack visible on laptop-height screens. */
+@media (min-width: 1061px) and (max-height: 880px) {
+  body.rule-page .topbar,
+  body.batch-page .topbar {
+    height: 70px;
   }
 
-  body.guide-page .editor-column {
-    grid-template-rows: 132px 180px 300px 108px;
+  body.rule-page .workspace,
+  body.batch-page .workspace {
+    height: calc(100dvh - 70px);
+  }
+
+  body.rule-page .canvas,
+  body.batch-page .canvas {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  body.rule-page .editor-column,
+  body.batch-page .editor-column {
+    grid-template-rows: 90px 145px minmax(230px, 1fr) 190px;
+    overflow: hidden;
+    padding-right: 0;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 720px) {
+  body.rule-page .topbar,
+  body.batch-page .topbar {
+    height: 64px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  body.rule-page .brand-logo-link,
+  body.batch-page .brand-logo-link {
+    --brand-logo-width: 150px;
+  }
+
+  body.rule-page .workspace,
+  body.batch-page .workspace {
+    height: calc(100dvh - 64px);
+  }
+
+  body.rule-page .canvas,
+  body.batch-page .canvas {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  body.rule-page .editor-column,
+  body.batch-page .editor-column {
+    grid-template-rows: 78px 115px minmax(205px, 1fr) 174px;
+    gap: 6px;
+    overflow: hidden;
+    padding-right: 0;
+  }
+
+  body.rule-page .accepted-shapes-block,
+  body.batch-page .accepted-shapes-block {
+    padding: 7px;
+  }
+
+  body.app-page .accepted-shapes-block #export-shapes {
+    height: 26px;
+    min-height: 26px;
+    flex-basis: 26px;
+    margin-top: 5px;
+  }
+}
+
+@media (min-width: 1061px) {
+  body.rule-page .rail .model-panel,
+  body.batch-page .rail .model-panel {
+    margin-top: 12px !important;
+  }
+
+  body.rule-page .shape-profile-block .astrea-baseline-status,
+  body.batch-page .shape-profile-block .astrea-baseline-status {
+    margin-top: 10px;
+  }
+
+  body.app-page .editor-column > .section-block > .section-title button,
+  body.app-page .editor-column .section-title-actions button,
+  body.app-page .editor-column .section-actions button {
+    height: 28px;
+    min-height: 28px;
+    padding: 0 9px;
+    font-size: 0.72rem;
+  }
+
+  body.app-page .accepted-shapes-block .accepted-list {
+    flex: 0 0 92px;
+    height: 92px;
+    min-height: 92px;
+    max-height: 92px !important;
+  }
+
+  body.app-page .accepted-shapes-block #export-shapes {
+    flex: 0 0 30px;
+    height: 30px;
+    min-height: 30px;
+    margin-top: 7px;
+    padding: 0 10px;
+    font-size: 0.74rem;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 720px) {
+  body.app-page .accepted-shapes-block #export-shapes {
+    height: 26px;
+    min-height: 26px;
+    flex-basis: 26px;
+    margin-top: 5px;
+  }
+}
+
+/* Prefix editing grows without reducing the review and accepted-shape tracks. */
+@media (min-width: 1061px) {
+  body.rule-page .editor-column,
+  body.batch-page .editor-column {
+    align-content: start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (min-width: 1061px) and (min-height: 951px) {
+  body.rule-page .editor-column {
+    grid-template-rows: minmax(180px, 0.3fr) 190px minmax(290px, 1fr) 220px;
+  }
+
+  body.batch-page .editor-column {
+    grid-template-rows: minmax(180px, 0.3fr) 190px minmax(290px, 1fr) 220px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 950px) {
+  body.rule-page .editor-column {
+    grid-template-rows: 145px 184px minmax(230px, 1fr) 195px;
+  }
+
+  body.batch-page .editor-column {
+    grid-template-rows: 145px 160px minmax(230px, 1fr) 195px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 880px) {
+  body.rule-page .editor-column {
+    grid-template-rows: 120px 184px 230px 190px;
+  }
+
+  body.batch-page .editor-column {
+    grid-template-rows: 120px 145px 230px 190px;
+  }
+}
+
+@media (min-width: 1061px) and (max-height: 720px) {
+  body.rule-page .editor-column {
+    grid-template-rows: 104px 184px 205px 174px;
+  }
+
+  body.batch-page .editor-column {
+    grid-template-rows: 104px 115px 205px 174px;
   }
 }

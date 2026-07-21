@@ -6,11 +6,16 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, List, Optional
 
+from shard.api.errors import redact_text
+
 
 _REQUEST_ID: ContextVar[str] = ContextVar("shard_request_id", default="")
 _REQUEST_LOG_BUFFER: ContextVar[Optional[List[str]]] = ContextVar(
     "shard_request_log_buffer",
     default=None,
+)
+_REQUEST_SECRETS: ContextVar[tuple[str, ...]] = ContextVar(
+    "shard_request_secrets", default=()
 )
 
 
@@ -47,12 +52,21 @@ class Logger:
             _REQUEST_LOG_BUFFER.reset(token_buffer)
             _REQUEST_ID.reset(token_id)
 
+    @contextmanager
+    def secret_context(self, secrets) -> Iterator[None]:
+        """Redact request credentials from console and captured log output."""
+        token = _REQUEST_SECRETS.set(tuple(str(item) for item in secrets if item))
+        try:
+            yield
+        finally:
+            _REQUEST_SECRETS.reset(token)
+
     def _emit(self, level: str, msg: str) -> None:
         request_id = _REQUEST_ID.get()
         prefix = f"[{level}]"
         if request_id:
             prefix += f" [req:{request_id}]"
-        line = f"{prefix} {msg}"
+        line = f"{prefix} {redact_text(msg, _REQUEST_SECRETS.get())}"
         print(line)
         buffer = _REQUEST_LOG_BUFFER.get()
         if buffer is not None:

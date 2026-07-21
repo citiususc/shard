@@ -1,4 +1,4 @@
-"""HTTP regression tests for canonical and legacy API routes."""
+"""HTTP regression tests for the strict API and legacy compatibility routes."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import http.client
 import json
 import sys
 import threading
+import time
 import unittest
 from functools import partial
 from http.server import ThreadingHTTPServer
@@ -17,14 +18,92 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
-from run_demo import (  # noqa: E402
-    ApplicationHTTPRequestHandler,
-    compatibility_server_specs,
-    parse_args,
+from run_demo import ApplicationHTTPRequestHandler, compatibility_server_specs, parse_args  # noqa: E402
+from shard.integrations.astrea import (  # noqa: E402
+    AstreaRateLimitError,
+    AstreaTimeoutError,
+    AstreaUnavailableError,
 )
-from shard.api.operations import send_guide_event  # noqa: E402
-from shard.integrations.astrea import AstreaUnavailableError  # noqa: E402
+from shard.api.operational import RATE_LIMITER  # noqa: E402
 from shard.observability import logger  # noqa: E402
+
+
+ONTOLOGY = """@prefix ex: <http://example.org/books#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:Book a owl:Class ; rdfs:label "Book" .
+ex:title a owl:DatatypeProperty ; rdfs:label "title" ;
+    rdfs:domain ex:Book ; rdfs:range xsd:string .
+"""
+
+SHAPE = """@prefix ex: <http://example.org/books#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+<http://example.org/books/shapes/BookShape> a sh:NodeShape ;
+    sh:targetClass ex:Book ; sh:property [ sh:path ex:title ; sh:minCount 1 ] .
+"""
+
+BATCH = """# Data Constraints
+
+## Rule
+- Number: BR-BOOK-001
+- Title: Book title
+### Data constraint
+Every Book must have exactly one title.
+"""
+
+RULE = {
+    "number": "BR-BOOK-001",
+    "title": "Book title",
+    "text": "Every Book must have exactly one title.",
+}
+
+
+def _workflow_result(workflow="rule-to-shape"):
+    resolution = {
+        "rule_number": RULE["number"],
+        "title": RULE["title"],
+        "text": RULE["text"],
+        "resolution": {
+            "resolved_by": "label",
+            "confidence": 0.91,
+            "targets": ["ex:Book", "ex:title"],
+            "focus_nodes": ["ex:Book"],
+            "constraint_paths": ["ex:title"],
+            "related_terms": [],
+        },
+    }
+    shape = {
+        "rule_number": RULE["number"],
+        "rule_title": RULE["title"],
+        "targets": ["ex:Book", "ex:title"],
+        "focus_nodes": ["ex:Book"],
+        "constraint_paths": ["ex:title"],
+        "related_terms": [],
+        "shape": SHAPE,
+        "valid": True,
+        "attempts": 1,
+        "error_type": "none",
+    }
+    summary = {
+        "rules_total": 1, "rules_unresolved": 0, "targets_total": 2,
+        "generated_total": 1, "valid": 1, "invalid": 0,
+    }
+    if workflow == "rule-to-shape":
+        return {
+            "workflow": workflow, "rule": resolution, "shape": shape,
+            "unresolved": False, "unresolved_rules": [], "summary": summary,
+            "namespaces": {}, "astrea": {}, "merge": None,
+            "final_shape_document": SHAPE,
+        }
+    return {
+        "workflow": "batch-to-shapes", "summary": summary,
+        "generation": {
+            "rules": [resolution], "shapes": [shape], "unresolved_rules": [],
+            "shape_document": SHAPE,
+        },
+        "astrea": {}, "merge": None, "final_shape_document": SHAPE,
+    }
 
 
 class UnifiedApiTests(unittest.TestCase):
@@ -42,15 +121,22 @@ class UnifiedApiTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=2)
 
-    def request(self, method, path, payload=None, request_id="contract-test"):
+    def request(self, method, path, payload=None, request_id="contract-test", headers=None):
+        body = json.dumps(payload).encode() if payload is not None else None
+        return self.request_bytes(
+            method, path, body, request_id=request_id, extra_headers=headers
+        )
+
+    def request_bytes(
+        self, method, path, body=None, request_id="contract-test", extra_headers=None
+    ):
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.server.server_address[1], timeout=10
         )
-        body = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {"Connection": "close", "X-Request-ID": request_id}
         if body is not None:
-            headers["Content-Type"] = "application/json"
-            headers["Content-Length"] = str(len(body))
+            headers.update({"Content-Type": "application/json", "Content-Length": str(len(body))})
+        headers.update(extra_headers or {})
         connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
         raw = response.read()
@@ -58,540 +144,491 @@ class UnifiedApiTests(unittest.TestCase):
         connection.close()
         return result
 
-    def request_raw(self, method, path, request_id="contract-test"):
+    def request_raw(self, path):
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.server.server_address[1], timeout=10
         )
-        connection.request(method, path, headers={
-            "Connection": "close",
-            "X-Request-ID": request_id,
-        })
+        connection.request("GET", path, headers={"Connection": "close"})
         response = connection.getresponse()
         result = response.status, dict(response.getheaders()), response.read()
         connection.close()
         return result
 
-    def request_sse(self, path, payload, request_id="stream-contract-test"):
+    def request_sse(self, path, payload):
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.server.server_address[1], timeout=10
         )
-        body = json.dumps(payload).encode("utf-8")
+        body = json.dumps(payload).encode()
         connection.request("POST", path, body=body, headers={
-            "Connection": "close",
-            "Content-Type": "application/json",
-            "Content-Length": str(len(body)),
-            "X-Request-ID": request_id,
+            "Connection": "close", "Content-Type": "application/json",
+            "Content-Length": str(len(body)), "X-Request-ID": "sse-contract-test",
         })
         response = connection.getresponse()
         headers = dict(response.getheaders())
         events = []
         while True:
-            line = response.readline().decode("utf-8")
+            line = response.readline().decode()
             if not line:
                 break
-            if not line.startswith("data: "):
-                continue
-            event = json.loads(line[6:])
-            events.append(event)
-            if event.get("type") in {"done", "error"}:
-                break
+            if line.startswith("data: "):
+                event = json.loads(line[6:])
+                events.append(event)
+                if event.get("event") in {"completed", "failed"} or event.get("type") in {"done", "error"}:
+                    break
         connection.close()
         return response.status, headers, events
 
-    def assert_alias_equivalence(self, canonical, legacy, payload):
-        canonical_response = self.request("POST", canonical, payload)
-        legacy_response = self.request("POST", legacy, payload)
-        self.assertEqual(canonical_response[0], legacy_response[0])
-        canonical_payload = dict(canonical_response[2])
-        provenance = canonical_payload.pop("provenance")
-        self.assertEqual(canonical_payload, legacy_response[2])
-        self.assertEqual(provenance["request_id"], "contract-test")
-        self.assertEqual(provenance["route"], canonical)
-        self.assertNotIn("provenance", legacy_response[2])
-        self.assertEqual(canonical_response[1]["X-Request-ID"], "contract-test")
-        self.assertEqual(legacy_response[1]["X-Request-ID"], "contract-test")
-        self.assertEqual(canonical_response[1]["X-SHARD-API-Version"], "v1")
+    def test_parse_and_validation_support_canonical_and_legacy_inputs(self):
+        canonical = self.request("POST", "/api/v1/ontology/parse", {
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY}
+        })
+        legacy = self.request("POST", "/parse-ontology", {
+            "filename": "books.ttl", "content": ONTOLOGY
+        })
+        self.assertEqual(canonical[0], 200)
+        self.assertEqual(legacy[0], 200)
+        self.assertEqual(len(canonical[2]["entities"]), len(legacy[2]["entities"]))
+        self.assertIn("operation_metadata", canonical[2])
+        self.assertNotIn("provenance", canonical[2])
+        self.assertNotIn("provenance", legacy[2])
 
-    def request_standalone(self, handler, path, payload):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            connection = http.client.HTTPConnection(
-                "127.0.0.1", server.server_address[1], timeout=10
-            )
-            body = json.dumps(payload).encode("utf-8")
-            connection.request("POST", path, body=body, headers={
-                "Connection": "close",
-                "Content-Type": "application/json",
-                "Content-Length": str(len(body)),
-                "X-Request-ID": "standalone-contract-test",
-            })
-            response = connection.getresponse()
-            result = response.status, json.loads(response.read() or b"{}")
-            connection.close()
-            return result
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=2)
+        canonical = self.request("POST", "/api/v1/shapes/validate", {
+            "shape_document": SHAPE
+        })
+        legacy = self.request("POST", "/validate-shape", {"shape": SHAPE})
+        self.assertTrue(canonical[2]["valid"])
+        self.assertEqual(canonical[2]["valid"], legacy[2]["valid"])
+        self.assertIn("provenance", canonical[2])
 
-    def test_parse_route_matches_legacy_alias(self):
-        ontology = (ROOT / "examples" / "asset-maintenance" / "ontology.ttl").read_text(
-            encoding="utf-8"
-        )
-        self.assert_alias_equivalence(
-            "/api/v1/ontology/parse",
-            "/parse-ontology",
-            {"filename": "asset.ttl", "content": ontology},
-        )
-
-    def test_shape_validation_route_matches_legacy_alias(self):
-        payload = {
-            "prefixes": "@prefix sh: <http://www.w3.org/ns/shacl#> .",
-            "shape": "<urn:test:Shape> a sh:NodeShape .",
-        }
-        self.assert_alias_equivalence(
-            "/api/v1/shapes/validate", "/validate-shape", payload
-        )
-
-    def test_astrea_baseline_route_matches_legacy_alias(self):
-        result = {
-            "available": True,
-            "source": "astrea-api",
-            "name": "ontology_astrea.ttl",
-            "ontology_hash": "abc123",
-            "shape_document": "<urn:test:Shape> a <http://www.w3.org/ns/shacl#NodeShape> .",
-            "shape_count": 1,
-        }
-        with patch(
-            "shard.api.operations.generate_astrea_baseline",
-            return_value=result,
-        ):
-            self.assert_alias_equivalence(
-                "/api/v1/baselines/astrea",
-                "/generate-astrea-baseline",
-                {"ontology_filename": "ontology.ttl", "ontology_content": "test"},
-            )
-
-    def test_astrea_unavailability_has_a_stable_machine_readable_error(self):
-        with patch(
-            "shard.api.operations.generate_astrea_baseline",
-            side_effect=AstreaUnavailableError("Astrea timed out."),
-        ):
-            status, _, payload = self.request(
-                "POST",
-                "/api/v1/baselines/astrea",
-                {"ontology_filename": "ontology.ttl", "ontology_content": "test"},
-            )
-        self.assertEqual(status, 503)
-        self.assertFalse(payload["available"])
-        self.assertEqual(payload["error_type"], "astrea_unavailable")
-        self.assertIn("continue without it", payload["message"])
-
-    def test_provenance_excludes_credentials_and_request_content(self):
-        secret = "secret-token-that-must-not-leak"
-        rule = "Private business rule text"
-        status, _, payload = self.request("POST", "/api/v1/shapes/validate", {
-            "shape": "<urn:test:Shape> a <http://www.w3.org/ns/shacl#NodeShape> .",
-            "business_rule": rule,
-            "provider": "databricks",
-            "model": "example-model",
-            "inference_config": {
-                "provider": "databricks",
-                "databricks": {
-                    "token": secret,
-                    "base_url": "https://private.example/api",
-                },
-            },
+    def test_target_resolution_uses_the_discriminated_request(self):
+        status, _, response = self.request("POST", "/api/v1/rules/resolve-targets", {
+            "input_type": "rule",
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+            "rule": RULE,
+            "resolver": {"llm_fallback": False},
         })
         self.assertEqual(status, 200)
-        serialized = json.dumps(payload["provenance"])
-        self.assertNotIn(secret, serialized)
-        self.assertNotIn("private.example", serialized)
-        self.assertNotIn(rule, serialized)
-        self.assertEqual(payload["provenance"]["inference"]["models"]["generation"], "example-model")
+        self.assertEqual(response["rules"][0]["resolved_by"], "label")
+        self.assertEqual(response["rules"][0]["score_kind"], "lexical")
+        self.assertIn("resolution_score", response["rules"][0])
+        self.assertNotIn("confidence", response["rules"][0])
+        self.assertEqual(response["rules"][0]["rule"], RULE)
 
-    def test_public_profile_rejects_local_inference_through_both_routes(self):
+    def test_shape_build_accepts_a_previously_grounded_rule_context(self):
         request = {
-            "provider": "huggingface",
-            "model": "example/local-model",
-            "inference_config": {"provider": "huggingface"},
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+            "rule": RULE,
+            "target_roles": {
+                "focus_nodes": [{"iri": "ex:Book", "label": "Book"}],
+                "constraint_paths": [{"iri": "ex:title", "label": "title"}],
+                "related_terms": [{"iri": "xsd:string", "label": "string"}],
+            },
         }
-        with patch.dict("os.environ", {"SHARD_DEPLOYMENT_PROFILE": "public"}):
-            canonical = self.request("POST", "/api/v1/shapes/build", request)
-            legacy = self.request("POST", "/build-shacl-shape", request)
-        self.assertEqual(canonical[0], 403)
-        self.assertEqual(legacy[0], 403)
-        canonical_payload = dict(canonical[2])
-        self.assertEqual(canonical_payload.pop("provenance")["deployment_profile"], "public")
-        self.assertEqual(canonical_payload, legacy[2])
-        self.assertEqual(canonical_payload["code"], "provider_disabled")
-
-    def test_local_model_status_route_checks_cache_without_downloading(self):
         result = {
-            "model": "example/tiny-model",
-            "downloaded": False,
-            "status": "not-downloaded",
-            "message": "Not downloaded locally.",
+            "shape": SHAPE,
+            "valid": True,
+            "attempts": 1,
+            "hints": [],
+            "fallback": False,
+            "not_found": False,
+            "error_type": "none",
+            "message": "Generated and validated.",
         }
-        with patch("shard.api.operations.local_model_status", return_value=result) as status:
-            self.assert_alias_equivalence(
-                "/api/v1/models/local/status",
-                "/local-model-status",
-                {"model": "example/tiny-model"},
-            )
-        self.assertEqual(status.call_count, 2)
 
-    def test_local_model_download_streams_only_after_explicit_request(self):
-        def fake_download(model_id, emit):
-            emit({
-                "type": "start",
-                "model": model_id,
-                "percent": 0,
-                "message": "Starting.",
-            })
-            result = {
-                "type": "done",
-                "model": model_id,
-                "downloaded": True,
-                "percent": 100,
-                "message": "Downloaded locally.",
-            }
-            emit(result)
-            return result
+        with patch("shard.api.operations.build_shape", return_value=result):
+            status, _, response = self.request("POST", "/api/v1/shapes/build", request)
 
-        with patch("shard.api.operations.download_local_model", side_effect=fake_download):
-            status, headers, events = self.request_sse(
-                "/api/v1/models/local/download",
-                {"model": "example/tiny-model"},
-            )
         self.assertEqual(status, 200)
-        self.assertTrue(headers["Content-Type"].startswith("text/event-stream"))
-        self.assertEqual([event["type"] for event in events], ["start", "done"])
-        self.assertEqual(events[-1]["request_id"], "stream-contract-test")
-
-    def test_public_profile_rejects_local_cache_and_download_operations(self):
-        payload = {"model": "example/tiny-model"}
-        with patch.dict("os.environ", {"SHARD_DEPLOYMENT_PROFILE": "public"}):
-            status_response = self.request(
-                "POST", "/api/v1/models/local/status", payload
-            )
-            download_response = self.request(
-                "POST", "/api/v1/models/local/download", payload
-            )
-        self.assertEqual(status_response[0], 403)
-        self.assertEqual(download_response[0], 403)
-        self.assertEqual(status_response[2]["code"], "provider_disabled")
-        self.assertEqual(download_response[2]["code"], "provider_disabled")
-
-    def test_guide_validation_error_matches_legacy_alias(self):
-        self.assert_alias_equivalence(
-            "/api/v1/guides/generate", "/generate-from-guide", {}
-        )
-
-    def test_api_root_and_openapi_document_are_discoverable(self):
-        status, _, payload = self.request("GET", "/api/v1")
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["api_version"], "v1")
-        self.assertEqual(payload["docs"], "/api/v1/docs")
-        self.assertEqual(payload["documentation"], "/api/v1/docs")
-        self.assertEqual(payload["openapi"], "/api/v1/openapi.json")
+        self.assertEqual(response["shape_document"], SHAPE)
+        self.assertTrue(response["valid"])
+        self.assertEqual(response["provenance"]["source_rule"], RULE)
         self.assertEqual(
-            payload["workflows"]["rule_to_shape"],
-            "/api/v1/workflows/rule-to-shape",
+            response["provenance"]["target_roles"]["constraint_paths"][0]["iri"],
+            "ex:title",
         )
 
-        status, headers, document = self.request("GET", "/api/v1/openapi.json")
-        self.assertEqual(status, 200)
-        self.assertEqual(document["openapi"], "3.1.0")
-        self.assertIn("/api/v1/workflows/guide-to-shapes", document["paths"])
-        self.assertNotIn("request_id", document)
-        self.assertNotIn("provenance", document)
-        self.assertTrue(
-            headers["Content-Type"].startswith("application/vnd.oai.openapi+json")
-        )
-
-    def test_swagger_ui_is_served_with_the_openapi_contract_and_csp(self):
-        status, headers, body = self.request_raw("GET", "/api/v1/docs")
-        document = body.decode("utf-8")
-        self.assertEqual(status, 200)
-        self.assertTrue(headers["Content-Type"].startswith("text/html"))
-        self.assertEqual(headers["X-SHARD-Operation"], "system.docs")
-        self.assertIn("SwaggerUIBundle", document)
-        self.assertIn("/api/v1/openapi.json", document)
-        self.assertIn("SHARD REST API", document)
-        self.assertIn("connect-src 'self'", headers["Content-Security-Policy"])
-
-    def test_complete_rule_workflow_accepts_the_nested_contract(self):
-        workflow_result = {
-            "workflow": "rule-to-shape",
-            "rule": {"rule_number": "BR-001", "resolution": {"resolved_by": "label"}},
-            "shape": {"shape": "<urn:test:Shape> a <http://www.w3.org/ns/shacl#NodeShape> .", "valid": True},
-            "unresolved": False,
-            "unresolved_rules": [],
-            "summary": {"rules_total": 1, "valid": 1, "invalid": 0},
-            "final_shape_document": "<urn:test:Shape> a <http://www.w3.org/ns/shacl#NodeShape> .",
-        }
-        fake_workflow = Mock(return_value=workflow_result)
-        with patch.dict(
-            "shard.api.operations.WORKFLOW_OPERATIONS",
-            {"workflows.rule.generate": fake_workflow},
-        ):
-            status, headers, payload = self.request(
-                "POST",
-                "/api/v1/workflows/rule-to-shape",
-                {
-                    "ontology": {"filename": "ontology.ttl", "content": "ontology"},
-                    "rule": {"number": "BR-001", "title": "Rule", "text": "Rule text"},
-                    "inference": {
-                        "provider": "databricks",
-                        "generation_model": "generation-model",
-                    },
-                },
+    def test_astrea_errors_are_typed_and_timeout_is_distinct(self):
+        request = {"ontology": {"filename": "books.ttl", "content": ONTOLOGY}}
+        cases = [
+            (AstreaUnavailableError("offline"), 503, "ASTREA_UNAVAILABLE"),
+            (AstreaRateLimitError("busy"), 429, "ASTREA_RATE_LIMIT_EXCEEDED"),
+            (AstreaTimeoutError("late"), 504, "ASTREA_REQUEST_TIMEOUT"),
+        ]
+        for error, expected_status, expected_code in cases:
+            with self.subTest(code=expected_code), patch(
+                "shard.api.operations.generate_astrea_baseline", side_effect=error
+            ):
+                status, _, payload = self.request(
+                    "POST", "/api/v1/baselines/astrea", request
+                )
+            self.assertEqual(status, expected_status)
+            self.assertEqual(payload["code"], expected_code)
+            self.assertEqual(
+                set(payload), {"error", "code", "message", "request_id", "details"}
             )
 
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["workflow"], "rule-to-shape")
-        self.assertEqual(payload["provenance"]["operation"], "workflows.rule.generate")
-        self.assertEqual(headers["X-SHARD-Operation"], "workflows.rule.generate")
-        normalized = fake_workflow.call_args.args[0]
-        self.assertEqual(normalized["ontology_content"], "ontology")
-        self.assertEqual(normalized["business_rule"], "Rule text")
-        self.assertEqual(normalized["llm_model"], "generation-model")
+    def test_schema_malformed_json_and_not_found_errors_match_runtime_codes(self):
+        status, _, error = self.request("POST", "/api/v1/ontology/parse", {})
+        self.assertEqual(status, 422)
+        self.assertEqual(error["code"], "REQUEST_SCHEMA_VALIDATION_FAILED")
+        self.assertTrue(error["details"]["issues"])
 
-    def test_complete_guide_workflow_reports_invalid_requests_as_json(self):
-        status, _, payload = self.request(
-            "POST",
-            "/api/v1/workflows/guide-to-shapes",
-            {"ontology": {"content": "ontology"}},
+        status, _, error = self.request_bytes(
+            "POST", "/api/v1/ontology/parse", b"{invalid"
         )
         self.assertEqual(status, 400)
-        self.assertEqual(payload["code"], "invalid_request")
-        self.assertIn("guide.content", payload["message"])
+        self.assertEqual(error["code"], "MALFORMED_JSON")
 
-    def test_complete_workflow_redacts_request_credentials_from_logs(self):
+        status, _, error = self.request("GET", "/api/v1/not-a-route")
+        self.assertEqual(status, 404)
+        self.assertEqual(error["code"], "RESOURCE_NOT_FOUND")
+
+    def test_workflow_provenance_and_logs_redact_credentials(self):
         secret = "workflow-secret-token"
 
         def fake_workflow(_):
-            logger.info(f"Dependency diagnostic accidentally included {secret}")
-            return {
-                "workflow": "rule-to-shape",
-                "rule": {},
-                "shape": None,
-                "unresolved": True,
-                "summary": {},
-                "final_shape_document": "",
-            }
+            logger.info(f"Diagnostic accidentally included {secret}")
+            return _workflow_result()
 
         with patch.dict(
             "shard.api.operations.WORKFLOW_OPERATIONS",
             {"workflows.rule.generate": fake_workflow},
         ), patch("builtins.print"):
-            status, _, payload = self.request(
-                "POST",
-                "/api/v1/workflows/rule-to-shape",
-                {
-                    "ontology": {"content": "ontology"},
-                    "rule": {"text": "Rule text"},
+            status, headers, payload = self.request(
+                "POST", "/api/v1/workflows/rule-to-shape", {
+                    "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+                    "rule": RULE,
                     "inference": {
-                        "provider": "databricks",
-                        "databricks": {
-                            "base_url": "https://example.test/mlflow/v1",
-                            "token": secret,
-                        },
+                        "provider": "databricks", "generation_model": "chat-model",
+                        "databricks": {"base_url": "https://private.example/api", "token": secret},
                     },
                 },
             )
         self.assertEqual(status, 200)
         serialized = json.dumps(payload)
         self.assertNotIn(secret, serialized)
+        self.assertNotIn("private.example", serialized)
         self.assertIn("[redacted]", payload["logs"])
+        self.assertEqual(payload["provenance"]["source_rule"], RULE)
+        self.assertEqual(headers["X-SHARD-Operation"], "workflows.rule.generate")
 
-    def test_public_profile_rejects_nested_local_inference_before_workflow(self):
-        fake_workflow = Mock()
+    def test_batch_workflow_uses_only_the_canonical_versioned_route(self):
+        request = {
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+            "batch": {"filename": "rules.md", "content": BATCH, "format": "md"},
+        }
+        fake = Mock(return_value=_workflow_result("batch-to-shapes"))
         with patch.dict(
             "shard.api.operations.WORKFLOW_OPERATIONS",
-            {"workflows.rule.generate": fake_workflow},
-        ), patch.dict("os.environ", {"SHARD_DEPLOYMENT_PROFILE": "public"}):
-            status, _, payload = self.request(
-                "POST",
-                "/api/v1/workflows/rule-to-shape",
-                {
-                    "ontology": {"content": "ontology"},
-                    "rule": {"text": "Rule text"},
-                    "inference": {
-                        "provider": "huggingface",
-                        "generation_model": "org/local-model",
-                    },
-                },
-            )
-        self.assertEqual(status, 403)
-        self.assertEqual(payload["code"], "provider_disabled")
-        fake_workflow.assert_not_called()
+            {"workflows.batch.generate": fake},
+        ):
+            canonical = self.request("POST", "/api/v1/workflows/batch-to-shapes", request)
+            removed = self.request("POST", "/api/v1/workflows/batch-to-rules", request)
+        self.assertEqual(canonical[0], 200)
+        self.assertEqual(canonical[2]["workflow"], "batch-to-shapes")
+        self.assertEqual(removed[0], 404)
 
-    def test_capabilities_publish_the_machine_readable_contract(self):
-        status, _, payload = self.request("GET", "/api/v1/capabilities")
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["api"]["version"], "v1")
-        self.assertEqual(len(payload["api"]["services"]), 5)
-        self.assertNotIn("token", json.dumps(payload).lower())
-
-        legacy_status, legacy_headers, legacy_payload = self.request(
-            "GET", "/api/capabilities"
-        )
-        self.assertEqual(legacy_status, 200)
-        self.assertNotIn("api", legacy_payload)
-        self.assertNotIn("request_id", legacy_payload)
-        self.assertNotIn("X-Request-ID", legacy_headers)
-
-        with patch.dict("os.environ", {"SHARD_SERVICE_LAYOUT": "split"}):
-            split_status, _, split_payload = self.request("GET", "/api/v1/capabilities")
-        self.assertEqual(split_status, 200)
-        self.assertEqual(split_payload["api"]["service_layout"], "split")
-        self.assertEqual(
-            split_payload["api"]["runtime_endpoints"]["parse"],
-            "http://127.0.0.1:9100/parse-ontology",
-        )
-
-    def test_health_and_unknown_api_routes_are_explicit(self):
-        status, _, payload = self.request("GET", "/api/v1/health")
-        self.assertEqual(status, 200)
-        self.assertTrue(payload["ok"])
-        status, _, payload = self.request("GET", "/api/v1/not-a-route")
-        self.assertEqual(status, 404)
-        self.assertEqual(payload["error"], "unknown endpoint")
-
-    def test_static_ui_and_versioned_api_share_one_origin(self):
-        connection = http.client.HTTPConnection(
-            "127.0.0.1", self.server.server_address[1], timeout=10
-        )
-        connection.request("GET", "/rule.html", headers={"Connection": "close"})
-        response = connection.getresponse()
-        content = response.read().decode("utf-8")
-        connection.close()
-        self.assertEqual(response.status, 200)
-        self.assertIn("Rule", content)
-
-    def test_runtime_retains_both_service_layouts_and_legacy_ports(self):
-        with patch.dict("os.environ", {"SHARD_SERVICE_LAYOUT": ""}):
-            self.assertEqual(parse_args([]).service_layout, "unified")
-        self.assertEqual(parse_args(["--service-layout", "split"]).service_layout, "split")
-        specs = compatibility_server_specs()
-        self.assertEqual([port for _, port, _ in specs], [9100, 9101, 9102, 9103, 9104])
-
-    def test_standalone_handlers_match_unified_legacy_aliases(self):
-        ontology = """
-@prefix ex: <http://example.org/test#> .
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-ex:Asset a owl:Class .
-"""
-        cases = [
-            ("/parse-ontology", {"filename": "ontology.ttl", "content": ontology}),
-            ("/find-relevant-terms", {}),
-            ("/validate-shape", {
-                "shape": "<urn:test:Shape> a <http://www.w3.org/ns/shacl#NodeShape> ."
-            }),
-            ("/generate-from-guide", {}),
-            ("/resolve-rule-targets", {}),
-        ]
-        for (_, _, handler), (path, payload) in zip(compatibility_server_specs(), cases):
+    def test_removed_job_compatibility_routes_return_not_found(self):
+        for path in (
+            "/api/v1/ontology/index/status",
+            "/api/v1/ontology/index/cancel",
+            "/api/v1/models/local/download",
+        ):
             with self.subTest(path=path):
-                direct_status, direct_payload = self.request_standalone(handler, path, payload)
-                facade_status, _, facade_payload = self.request(
-                    "POST", path, payload, request_id="standalone-contract-test"
+                status, _, payload = self.request("POST", path, {})
+                self.assertEqual(status, 404)
+                self.assertEqual(payload["code"], "RESOURCE_NOT_FOUND")
+
+    def test_api_requires_no_shard_authorization_header(self):
+        status, _, response = self.request("POST", "/api/v1/ontology/parse", {
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY}
+        })
+        self.assertEqual(status, 200)
+        self.assertIn("entities", response)
+
+    def test_cors_is_explicit_and_does_not_advertise_authorization(self):
+        allowed = self.request(
+            "GET", "/api/v1/health", headers={"Origin": "http://127.0.0.1:8768"}
+        )
+        rejected = self.request(
+            "GET", "/api/v1/health", headers={"Origin": "https://untrusted.example"}
+        )
+        self.assertEqual(allowed[1].get("Access-Control-Allow-Origin"), "http://127.0.0.1:8768")
+        self.assertNotIn("Authorization", allowed[1]["Access-Control-Allow-Headers"])
+        self.assertNotIn("Access-Control-Allow-Origin", rejected[1])
+
+    def test_extreme_request_rate_returns_429_with_retry_after(self):
+        RATE_LIMITER.reset()
+        limits = {
+            "RATE_LIMIT_REQUESTS_PER_MINUTE": "2",
+            "RATE_LIMIT_BURST": "2",
+            "RATE_LIMIT_EXPENSIVE_REQUESTS_PER_MINUTE": "2",
+        }
+        try:
+            with patch.dict("os.environ", limits):
+                for _ in range(2):
+                    response = self.request("POST", "/api/v1/ontology/parse", {
+                        "ontology": {"filename": "books.ttl", "content": ONTOLOGY}
+                    })
+                    self.assertEqual(response[0], 200)
+                limited = self.request("POST", "/api/v1/ontology/parse", {
+                    "ontology": {"filename": "books.ttl", "content": ONTOLOGY}
+                })
+            self.assertEqual(limited[0], 429)
+            self.assertGreaterEqual(int(limited[1]["Retry-After"]), 1)
+            self.assertEqual(limited[2]["code"], "DEPLOYMENT_RATE_LIMIT_EXCEEDED")
+        finally:
+            RATE_LIMITER.reset()
+
+    def test_extreme_json_body_returns_413(self):
+        with patch.dict("os.environ", {"MAX_REQUEST_BODY_MB": "1"}):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", self.server.server_address[1], timeout=10
+            )
+            connection.putrequest("POST", "/api/v1/ontology/parse")
+            connection.putheader("Connection", "close")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", str(1024 * 1024 + 1))
+            connection.putheader("X-Request-ID", "contract-test")
+            connection.endheaders()
+            raw_response = connection.getresponse()
+            status = raw_response.status
+            payload = json.loads(raw_response.read() or b"{}")
+            connection.close()
+        self.assertEqual(status, 413)
+        self.assertEqual(payload["code"], "PAYLOAD_TOO_LARGE")
+
+    def test_local_model_status_preserves_the_split_layout_adapter(self):
+        status_result = {
+            "model": "example/tiny-model", "downloaded": False,
+            "status": "not-downloaded", "message": "Not downloaded locally.",
+        }
+        with patch("shard.api.operations.local_model_status", return_value=status_result):
+            canonical = self.request("POST", "/api/v1/models/local/status", {
+                "model_id": "example/tiny-model"
+            })
+            legacy = self.request("POST", "/local-model-status", {
+                "model": "example/tiny-model"
+            })
+        self.assertEqual(canonical[2]["model_id"], "example/tiny-model")
+        self.assertEqual(legacy[2]["model"], "example/tiny-model")
+
+    def test_public_profile_disables_local_inference(self):
+        with patch.dict("os.environ", {"SHARD_DEPLOYMENT_PROFILE": "public"}):
+            status, _, payload = self.request("POST", "/api/v1/models/local/status", {
+                "model_id": "example/tiny-model"
+            })
+        self.assertEqual(status, 403)
+        self.assertEqual(payload["code"], "LOCAL_MODELS_DISABLED")
+        self.assertEqual(payload["details"]["provider"], "huggingface")
+
+    def test_model_check_maps_provider_failures_to_http_codes(self):
+        cases = [
+            ({"ok": False, "error_code": "provider_authentication_failed", "message": "Invalid credentials."}, 401, "PROVIDER_AUTHENTICATION_FAILED"),
+            ({"ok": False, "error_code": "rate_limited", "message": "Rate limited."}, 429, "MODEL_RATE_LIMIT_EXCEEDED"),
+            ({"ok": False, "error_code": "provider_timeout", "message": "Timed out."}, 504, "MODEL_REQUEST_TIMEOUT"),
+            ({"ok": False, "error_code": "model_unavailable", "message": "Unavailable."}, 503, "MODEL_UNAVAILABLE"),
+        ]
+        request = {
+            "inference_provider": "databricks", "model_id": "chat-model", "role": "chat"
+        }
+        for result, expected, expected_code in cases:
+            with self.subTest(status=expected), patch(
+                "shard.api.operations.validate_model", return_value=result
+            ):
+                status, _, payload = self.request(
+                    "POST", "/api/v1/models/check", request
                 )
-                self.assertEqual(direct_status, facade_status)
-                self.assertEqual(direct_payload, facade_payload)
+            self.assertEqual(status, expected)
+            self.assertEqual(payload["code"], expected_code)
 
-    def test_sse_transport_carries_the_same_provenance_object(self):
-        class Buffer:
-            def __init__(self):
-                self.content = b""
+    def test_model_check_uses_request_credentials_without_exposing_them(self):
+        captured = {}
+        secret = "dapi-browser-secret"
+        base_url = "https://workspace.example/ai-gateway/v1"
 
-            def write(self, value):
-                self.content += value
+        def inspect_context(_):
+            from shard.inference.context import (  # noqa: PLC0415
+                get_databricks_base_url,
+                get_databricks_token,
+            )
 
-            def flush(self):
-                pass
+            captured["base_url"] = get_databricks_base_url()
+            captured["token"] = get_databricks_token()
+            return {"ok": True, "message": "Available."}
 
-        class FakeHandler:
-            wfile = Buffer()
-            response_provenance = {"request_id": "sse-test", "operation": "guides.generate"}
+        request = {
+            "inference_provider": "databricks",
+            "model_id": "chat-model",
+            "role": "chat",
+            "inference": {
+                "provider": "databricks",
+                "generation_model": "chat-model",
+                "databricks": {"base_url": base_url, "token": secret},
+            },
+        }
+        with patch("shard.api.operations.validate_model", side_effect=inspect_context):
+            status, _, response = self.request("POST", "/api/v1/models/check", request)
 
-        handler = FakeHandler()
-        send_guide_event(handler, {"type": "status", "stage": "parsing"}, "sse-test")
-        event = json.loads(handler.wfile.content.decode("utf-8")[6:].strip())
-        self.assertEqual(event["request_id"], "sse-test")
-        self.assertEqual(event["provenance"], handler.response_provenance)
+        self.assertEqual(status, 200)
+        self.assertEqual(captured, {"base_url": base_url, "token": secret})
+        serialized = json.dumps(response)
+        self.assertNotIn(secret, serialized)
+        self.assertNotIn(base_url, serialized)
 
-    def test_canonical_and_legacy_sse_preserve_the_event_sequence(self):
-        ontology = """
-@prefix ex: <http://example.org/test#> .
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+    def test_shape_build_provider_timeout_returns_504(self):
+        request = {
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+            "rule": RULE,
+            "target_roles": {
+                "focus_nodes": [{"iri": "ex:Book"}],
+                "constraint_paths": [{"iri": "ex:title"}],
+                "related_terms": [],
+            },
+        }
+        with patch("shard.api.operations.build_shape", return_value={
+            "shape": "",
+            "valid": False,
+            "error": "provider timed out",
+            "error_type": "timeout",
+            "attempts": 0,
+        }):
+            status, _, response = self.request(
+                "POST", "/api/v1/shapes/build", request
+            )
+        self.assertEqual(status, 504)
+        self.assertEqual(response["code"], "MODEL_REQUEST_TIMEOUT")
 
-ex:Asset a owl:Class .
-ex:identifier a owl:DatatypeProperty ;
-    rdfs:domain ex:Asset ;
-    rdfs:range xsd:string .
-"""
-        guide = """
-# Business Rules
+    def test_embedding_index_creation_returns_a_job_resource(self):
+        with patch("shard.api.operations.prepare_embeddings", return_value={
+            "status": "ready", "message": "Ready.", "ontology_fingerprint": "fp"
+        }):
+            status, _, created = self.request("POST", "/api/v1/ontology/indexes", {
+                "ontology_terms": [], "ontology_hash": "books"
+            })
+            self.assertEqual(status, 202)
+            self.assertIn(created["status"], {"queued", "running", "completed"})
+            job_id = created["job_id"]
+            for _ in range(50):
+                status, _, job = self.request("GET", f"/api/v1/ontology/indexes/{job_id}")
+                if job["status"] == "completed":
+                    break
+                time.sleep(0.01)
+        self.assertEqual(status, 200)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["progress"], 1.0)
+        status, _, error = self.request(
+            "DELETE", f"/api/v1/ontology/indexes/{job_id}"
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(error["code"], "JOB_ALREADY_COMPLETED")
 
-## Rule
+    def test_local_model_download_job_returns_202_and_can_be_polled(self):
+        with patch("shard.api.operations.download_local_model", return_value={
+            "downloaded": True, "model": "example/tiny-model"
+        }):
+            status, _, created = self.request(
+                "POST", "/api/v1/models/local/downloads",
+                {"model_id": "example/tiny-model"},
+            )
+        self.assertEqual(status, 202)
+        job_id = created["job_id"]
+        for _ in range(50):
+            status, _, job = self.request(
+                "GET", f"/api/v1/models/local/downloads/{job_id}"
+            )
+            if job["status"] == "completed":
+                break
+            time.sleep(0.01)
+        self.assertEqual(status, 200)
+        self.assertEqual(job["status"], "completed")
 
-- Number: BR-001
-- Title: Asset identifier
-
-### Business rule
-
-Every asset must have exactly one identifier.
-"""
-        payload = {
-            "ontology_content": ontology,
-            "ontology_filename": "ontology.ttl",
-            "guide_content": guide,
-            "guide_filename": "rules.md",
+    def test_batch_sse_uses_named_json_events_and_terminal_completed(self):
+        request = {
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+            "batch": {"filename": "rules.md", "content": BATCH, "format": "md"},
         }
 
         def fake_generation(_, event_callback=None, **__):
             event_callback({
-                "type": "rule",
-                "stage": "rule",
-                "rule_number": "BR-001",
-                "title": "Asset identifier",
-                "current": 1,
-                "total": 1,
+                "type": "rule", "stage": "rule", "rule_number": RULE["number"],
+                "title": RULE["title"], "current": 1, "total": 1,
             })
-            event_callback({
-                "type": "done",
-                "unit": "rule",
-                "total": 1,
-                "valid": 0,
-                "invalid": 0,
-                "skipped": 0,
-            })
+            event_callback({"type": "done", "total": 1, "valid": 1, "invalid": 0})
             return {}
 
-        with patch("shard.application.guide_generation.generate_guide_shapes", fake_generation):
-            canonical = self.request_sse("/api/v1/guides/generate", payload)
-            legacy = self.request_sse("/generate-from-guide", payload)
+        with patch("shard.application.batch_generation.generate_batch_shapes", fake_generation):
+            status, headers, events = self.request_sse("/api/v1/batches/generate", request)
+        self.assertEqual(status, 200)
+        self.assertTrue(headers["Content-Type"].startswith("text/event-stream"))
+        self.assertEqual(events[-1]["event"], "completed")
+        self.assertEqual([item["sequence"] for item in events], list(range(1, len(events) + 1)))
+        self.assertTrue(all(
+            item["operation_metadata"]["operation"] == "batches.generate"
+            for item in events
+        ))
+        self.assertTrue(all("provenance" in item for item in events))
 
-        self.assertEqual(canonical[0], 200)
-        self.assertEqual(legacy[0], 200)
-        canonical_events = []
-        for event in canonical[2]:
-            item = dict(event)
-            provenance = item.pop("provenance")
-            self.assertEqual(provenance["operation"], "guides.generate")
-            canonical_events.append(item)
-        self.assertEqual(canonical_events, legacy[2])
+    def test_batch_sse_failure_is_terminal_and_structured(self):
+        request = {
+            "ontology": {"filename": "books.ttl", "content": ONTOLOGY},
+            "batch": {"filename": "rules.md", "content": BATCH, "format": "md"},
+        }
+
+        def failed_generation(*_, **__):
+            raise TimeoutError("provider request timed out")
+
+        with patch(
+            "shard.application.batch_generation.generate_batch_shapes",
+            side_effect=failed_generation,
+        ):
+            status, _, events = self.request_sse("/api/v1/batches/generate", request)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(events[-1]["event"], "failed")
+        self.assertEqual(events[-1]["error"]["code"], "MODEL_REQUEST_TIMEOUT")
+        self.assertEqual(events[-1]["error"]["request_id"], "sse-contract-test")
+
+    def test_discovery_swagger_redoc_capabilities_and_static_ui(self):
+        status, _, root = self.request("GET", "/api/v1")
+        self.assertEqual(status, 200)
+        self.assertEqual(root["workflows"]["batch_to_shapes"], "/api/v1/workflows/batch-to-shapes")
+
+        status, _, document = self.request("GET", "/api/v1/openapi.json")
+        self.assertEqual(status, 200)
+        self.assertEqual(document["openapi"], "3.1.0")
+        self.assertIn("/api/v1/workflows/batch-to-shapes", document["paths"])
+        self.assertNotIn("/api/v1/workflows/batch-to-rules", document["paths"])
+        self.assertNotIn("/api/v1/ontology/index", document["paths"])
+        self.assertNotIn("securitySchemes", document["components"])
+        credential = document["components"]["schemas"]["DatabricksCredentials"]
+        token_schema = credential["properties"]["token"]
+        self.assertEqual(token_schema["type"], "string")
+        self.assertEqual(token_schema["format"], "password")
+        self.assertTrue(token_schema["writeOnly"])
+
+        for path, marker in (("/api/v1/docs", "SwaggerUIBundle"), ("/api/v1/redoc", "Redoc.init")):
+            status, headers, body = self.request_raw(path)
+            self.assertEqual(status, 200)
+            self.assertIn(marker, body.decode())
+            self.assertIn("Content-Security-Policy", headers)
+
+        status, _, capabilities = self.request("GET", "/api/v1/capabilities")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(capabilities["api"]["services"]), 5)
+        self.assertNotIn("token", json.dumps(capabilities).lower())
+
+        status, _, body = self.request_raw("/rule.html")
+        self.assertEqual(status, 200)
+        self.assertIn("Rule", body.decode())
+
+    def test_runtime_retains_split_layout_and_legacy_ports(self):
+        with patch.dict("os.environ", {"SHARD_SERVICE_LAYOUT": ""}):
+            self.assertEqual(parse_args([]).service_layout, "unified")
+        self.assertEqual(parse_args(["--service-layout", "split"]).service_layout, "split")
         self.assertEqual(
-            [event.get("stage") or event.get("type") for event in canonical_events],
-            ["parsing", "template", "preprocessing", "rule", "done"],
+            [port for _, port, _ in compatibility_server_specs()],
+            [9100, 9101, 9102, 9103, 9104],
         )
 
 

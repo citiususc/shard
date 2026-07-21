@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Asset Maintenance Business Rules</title>
+  <title>Asset Maintenance Data Constraints</title>
 </head>
 <body>
 
   <header class="metadata">
-    <h1>Business Rules</h1>
+    <h1>Data Constraints</h1>
     <dl>
       <dt>Ontology</dt><dd class="ontology">ontology.ttl</dd>
       <dt>Author</dt><dd class="author">SHARD example fixture</dd>
@@ -21,7 +21,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-001</p>
       <p class="title"><strong>Title:</strong> Asset identifier</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every Asset must have exactly one asset identifier. The identifier must be a non-empty string.</p>
       </div>
     </section>
@@ -29,7 +29,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-002</p>
       <p class="title"><strong>Title:</strong> Asset lifecycle status</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every Asset must have exactly one lifecycle status. The lifecycle status must reference a LifecycleStatus value.</p>
       </div>
     </section>
@@ -37,7 +37,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-003</p>
       <p class="title"><strong>Title:</strong> Asset location</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every Asset must be located in exactly one Site.</p>
       </div>
     </section>
@@ -45,7 +45,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-004</p>
       <p class="title"><strong>Title:</strong> Machine sensor coverage</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every Machine must have at least one Sensor attached to it.</p>
       </div>
     </section>
@@ -53,7 +53,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-005</p>
       <p class="title"><strong>Title:</strong> Sensor measurements</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every Sensor must produce at least one Measurement. Each Measurement must have exactly one numeric measurement value and exactly one unit code.</p>
       </div>
     </section>
@@ -61,7 +61,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-006</p>
       <p class="title"><strong>Title:</strong> Maintenance task asset and due date</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every MaintenanceTask must be linked to exactly one Asset and must have exactly one due date.</p>
       </div>
     </section>
@@ -69,7 +69,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-007</p>
       <p class="title"><strong>Title:</strong> Maintenance task priority and assignment</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every MaintenanceTask must have exactly one priority level and must be assigned to exactly one Operator.</p>
       </div>
     </section>
@@ -77,7 +77,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-008</p>
       <p class="title"><strong>Title:</strong> Inspection target and date</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every Inspection must identify exactly one inspected Asset and exactly one inspection date.</p>
       </div>
     </section>
@@ -85,7 +85,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-009</p>
       <p class="title"><strong>Title:</strong> Work order composition</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every WorkOrder must contain at least one MaintenanceTask and must have exactly one responsible Department.</p>
       </div>
     </section>
@@ -93,7 +93,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-010</p>
       <p class="title"><strong>Title:</strong> Critical asset risk controls</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every CriticalAsset must have exactly one risk level and at least one required Certification.</p>
       </div>
     </section>
@@ -101,7 +101,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-011</p>
       <p class="title"><strong>Title:</strong> Factory code traceability</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Each registered item must store the unique factory code stamped on the equipment.</p>
       </div>
     </section>
@@ -109,7 +109,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-012</p>
       <p class="title"><strong>Title:</strong> Intervention deadline</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Every planned job must include the calendar deadline by which the intervention has to be finished.</p>
       </div>
     </section>
@@ -117,7 +117,7 @@
     <section class="rule">
       <p class="number"><strong>Number:</strong> BR-013</p>
       <p class="title"><strong>Title:</strong> Field review record</p>
-      <div class="business-rule">
+      <div class="data-constraint">
         <p>Each field review must state when it took place and the equipment that was reviewed.</p>
       </div>
     </section>

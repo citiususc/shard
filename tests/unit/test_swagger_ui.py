@@ -29,10 +29,11 @@ class SwaggerUiTests(unittest.TestCase):
         self.assertIn(f'integrity="{SWAGGER_UI_CSS_INTEGRITY}"', document)
         self.assertIn(f'integrity="{SWAGGER_UI_BUNDLE_INTEGRITY}"', document)
 
-    def test_document_keeps_validation_and_credentials_local(self):
+    def test_document_keeps_validation_local_without_authentication_ui(self):
         document = swagger_ui_document("/api/v1/openapi.json")
         self.assertIn("validatorUrl: null", document)
-        self.assertIn("persistAuthorization: false", document)
+        self.assertNotIn("persistAuthorization", document)
+        self.assertNotIn("authorize", document.lower())
         self.assertNotIn("petstore", document.lower())
         self.assertIn("connect-src 'self'", SWAGGER_UI_CSP)
         self.assertIn("frame-ancestors 'none'", SWAGGER_UI_CSP)

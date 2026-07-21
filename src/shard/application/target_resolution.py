@@ -1,7 +1,7 @@
-"""Resolve business rules to auditable, role-grouped ontology terms.
+"""Resolve data constraints to auditable, role-grouped ontology terms.
 
 The workflow parses a
-Business Rules template, parses the uploaded ontology into the existing catalog
+Data Constraints template, parses the uploaded ontology into the existing catalog
 shape, and resolves each rule to focus nodes, constrained paths and related
 terms without generating SHACL.
 
@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from shard.application.ontology_catalog import parse_ontology
 from shard.domain.business_rules import BusinessRule, parse_business_rules
+from shard.domain.limits import MAX_SEMANTIC_TARGETS, MAX_TOP_K
 from shard.observability import logger
 
 DEFAULT_TOP_K = 10
@@ -40,7 +41,7 @@ _LEADING_RELATION_WORDS = {
 
 @dataclass
 class RuleResolution:
-    """Auditable resolution of one business rule to role-grouped ontology terms."""
+    """Auditable resolution of one data constraint to role-grouped ontology terms."""
 
     rule_number: str
     targets: List[str]
@@ -356,7 +357,7 @@ def _label_candidates(rule: BusinessRule, ontology_terms: List[Dict[str, Any]]) 
 
     # Extra deterministic signal from ontology notes/comments. This is still
     # ontology-catalog evidence, not model inference, and helps relation labels
-    # that are paraphrased in the business rule.
+    # that are paraphrased in the data constraint.
     for term in ontology_terms:
         note_tokens = set(_tokens(" ".join(str(term.get(k, "")) for k in ("label", "ontologyNote", "comment"))))
         overlap = note_tokens & rule_tokens
@@ -683,7 +684,7 @@ def resolve_rule_target(
     semantic_max_targets: int = DEFAULT_SEMANTIC_MAX_TARGETS,
     top_k: int = DEFAULT_TOP_K,
 ) -> RuleResolution:
-    """Resolve one business rule to ontology terms and roles using auditable signals."""
+    """Resolve one data constraint to ontology terms and roles using auditable signals."""
     index_hits = _index_candidates(rule, ontology_terms, index_map or {})
     if index_hits:
         return _rule_resolution(
@@ -804,22 +805,22 @@ def resolve_template(
 ) -> Dict[str, Any]:
     """Parse ontology + rules and return a role-aware resolution table."""
     ontology_content = payload.get("ontology_content") or ""
-    guide_content = payload.get("guide_content") or ""
+    batch_content = payload.get("batch_content") or ""
     business_rule = payload.get("business_rule") or ""
     if not ontology_content:
         raise ValueError("Missing ontology_content.")
-    if not guide_content and not business_rule:
-        raise ValueError("Missing guide_content or business_rule.")
+    if not batch_content and not business_rule:
+        raise ValueError("Missing batch_content or business_rule.")
 
     ontology = parse_ontology(
         payload.get("ontology_filename") or "ontology.ttl",
         ontology_content,
     )
     ontology_terms = ontology.get("entities") or []
-    if guide_content:
+    if batch_content:
         rules = parse_business_rules(
-            guide_content,
-            filename=payload.get("guide_filename") or "business_rules_template",
+            batch_content,
+            filename=payload.get("batch_filename") or "business_rules_template",
         )
     else:
         rules = [BusinessRule(
@@ -829,12 +830,18 @@ def resolve_template(
             source_format="interactive",
             raw=str(business_rule),
         )]
-    top_k = max(1, min(50, int(payload.get("top_k", DEFAULT_TOP_K))))
+    top_k = max(1, min(MAX_TOP_K, int(payload.get("top_k", DEFAULT_TOP_K))))
     label_threshold = float(payload.get("label_threshold", DEFAULT_LABEL_THRESHOLD))
     strong_label_threshold = float(payload.get("strong_label_threshold", DEFAULT_STRONG_LABEL_THRESHOLD))
     semantic_threshold = float(payload.get("semantic_threshold", DEFAULT_SEMANTIC_THRESHOLD))
     semantic_target_margin = float(payload.get("semantic_target_margin", DEFAULT_SEMANTIC_TARGET_MARGIN))
-    semantic_max_targets = max(1, min(20, int(payload.get("semantic_max_targets", DEFAULT_SEMANTIC_MAX_TARGETS))))
+    semantic_max_targets = max(
+        1,
+        min(
+            MAX_SEMANTIC_TARGETS,
+            int(payload.get("semantic_max_targets", DEFAULT_SEMANTIC_MAX_TARGETS)),
+        ),
+    )
     semantic_payload = {
         **payload,
         "ontology_terms": ontology_terms,

@@ -258,7 +258,7 @@ function executionLogsAsText(state = loadExecutionLogState()) {
 }
 
 function clearExecutionLogs() {
-  localStorage.removeItem(STORE.executionLogs);
+  removeStoredValue(STORE.executionLogs);
   renderExecutionLogs(emptyExecutionLogState());
 }
 

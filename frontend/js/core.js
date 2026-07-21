@@ -7,23 +7,137 @@
  * prefixes and accepted shapes across the two pages.
  */
 
+function normalizeApiBase(value) {
+  const base = String(value || "api/v1/").trim() || "api/v1/";
+  return base.endsWith("/") ? base : `${base}/`;
+}
+
+const API_BASE = normalizeApiBase(window.SHARD_API_BASE || "api/v1/");
+const CANONICAL_API_PREFIX = "/api/v1/";
+
+function apiUrl(path) {
+  return `${API_BASE}${String(path || "").replace(/^\/+/, "")}`;
+}
+
+function isLoopbackHostname(hostname) {
+  const host = String(hostname || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
+
+function resolveRuntimeEndpoint(value) {
+  const endpoint = String(value || "").trim();
+  if (!endpoint) return "";
+  if (endpoint === CANONICAL_API_PREFIX.slice(0, -1)) {
+    return API_BASE.slice(0, -1);
+  }
+  if (endpoint.startsWith(CANONICAL_API_PREFIX)) {
+    return apiUrl(endpoint.slice(CANONICAL_API_PREFIX.length));
+  }
+  if (endpoint.startsWith(CANONICAL_API_PREFIX.slice(1))) {
+    return apiUrl(endpoint.slice(CANONICAL_API_PREFIX.length - 1));
+  }
+
+  try {
+    const parsed = new URL(endpoint, window.location.href);
+    if (isLoopbackHostname(parsed.hostname)
+        && !isLoopbackHostname(window.location.hostname)) {
+      return "";
+    }
+  } catch (_err) {
+    return "";
+  }
+  return endpoint;
+}
+
 const SERVICES = {
-  capabilities: "/api/v1/capabilities",
-  parse:    "/api/v1/ontology/parse",
-  terms:    "/api/v1/ontology/search",
-  prepareTerms: "/api/v1/ontology/index",
-  termStatus:   "/api/v1/ontology/index/status",
-  cancelTerms:  "/api/v1/ontology/index/cancel",
-  resolveRule: "/api/v1/rules/resolve-targets",
-  build:    "/api/v1/shapes/build",
-  validate: "/api/v1/shapes/validate",
-  astrea:   "/api/v1/baselines/astrea",
-  merge:    "/api/v1/shapes/merge",
-  validateModel: "/api/v1/models/check",
-  localModelStatus: "/api/v1/models/local/status",
-  downloadLocalModel: "/api/v1/models/local/download",
-  guide:    "/api/v1/guides/generate",
+  capabilities: apiUrl("capabilities"),
+  parse: apiUrl("ontology/parse"),
+  prepareTerms: apiUrl("ontology/indexes"),
+  resolveRule: apiUrl("rules/resolve-targets"),
+  build: apiUrl("shapes/build"),
+  validate: apiUrl("shapes/validate"),
+  astrea: apiUrl("baselines/astrea"),
+  merge: apiUrl("shapes/merge"),
+  validateModel: apiUrl("models/check"),
+  localModelStatus: apiUrl("models/local/status"),
+  downloadLocalModel: apiUrl("models/local/downloads"),
+  batch: apiUrl("batches/generate"),
 };
+
+function apiOntologyInput(ontology) {
+  return {
+    filename: (ontology && ontology.filename) || "ontology.ttl",
+    content: (ontology && ontology.content) || "",
+  };
+}
+
+function apiBusinessRule(text, number = "RULE-001", title = "Data constraint") {
+  return { number, title, text: String(text || "") };
+}
+
+function apiTermReference(term) {
+  if (typeof term === "string") return { iri: term };
+  return {
+    iri: String((term && (term.iri || term.target || term.full_iri)) || ""),
+    ...(term && term.label ? { label: String(term.label) } : {}),
+  };
+}
+
+function apiReferenceList(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter(Boolean).map(apiTermReference).filter((item) => item.iri);
+}
+
+function apiOntologyTerm(term) {
+  return {
+    id: String(term.id || ""),
+    iri: String(term.iri || term.full_iri || ""),
+    full_iri: String(term.full_iri || term.iri || ""),
+    label: String(term.label || ""),
+    type: term.type,
+    kind: String(term.kind || ""),
+    domain: apiReferenceList(term.domain),
+    range: apiReferenceList(term.range),
+    superclasses: apiReferenceList(term.superclasses || []),
+    comment: String(term.comment || ""),
+    ontology_note: String(term.ontology_note || term.ontologyNote || ""),
+    annotations: term.annotations && typeof term.annotations === "object"
+      ? term.annotations : {},
+  };
+}
+
+function apiInferenceOptions(models = getModels()) {
+  const config = getInferenceConfig();
+  return {
+    provider: models.provider,
+    ...(models.llmModel ? { generation_model: models.llmModel } : {}),
+    ...(models.embeddingModel ? { embedding_model: models.embeddingModel } : {}),
+    temperature: models.temperature,
+    ...(config.databricks ? { databricks: config.databricks } : {}),
+    ...(config.huggingface ? { huggingface: config.huggingface } : {}),
+  };
+}
+
+function apiValidationOptions() {
+  return {
+    profiles: getShapeValidationProfiles().map((profile) => ({
+      name: profile.name || "profile.ttl",
+      content: profile.content || "",
+    })),
+  };
+}
+
+function apiAstreaOptions() {
+  const baseline = astreaEvidencePayload();
+  return {
+    mode: getAstreaUseMode(),
+    merge_strategy: getAstreaMergeTechnique(),
+    failure_policy: "continue",
+    ...(baseline && baseline.content
+      ? { baseline: { name: baseline.name || "astrea.ttl", content: baseline.content } }
+      : {}),
+  };
+}
 
 const DEFAULT_DEPLOYMENT_CAPABILITIES = {
   deployment_profile: "local",
@@ -35,6 +149,7 @@ const DEFAULT_DEPLOYMENT_CAPABILITIES = {
 };
 let deploymentCapabilities = DEFAULT_DEPLOYMENT_CAPABILITIES;
 let deploymentCapabilitiesRequest = null;
+let deploymentCapabilitiesLoaded = false;
 
 /* Suggested inference models. These values populate the option lists only;
    a fresh browser session never selects or downloads one automatically. */
@@ -79,8 +194,8 @@ const STORE = {
   accepted: "shard.accepted",   // [{id, property, shape}]
   shapeProfiles: "shard.shapeProfiles", // [{id, name, size, content}]
   astreaBaseline: "shard.astreaBaseline", // API-generated baseline for the active ontology
-  astreaUseMode: "shard.astreaUseMode", // none | baseline | merge | both
-  astreaMergeTechnique: "shard.astreaMergeTechnique", // priority-llm | restrictive
+  astreaUseMode: "shard.astreaUseMode", // none | evidence | merge | evidence-and-merge
+  astreaMergeTechnique: "shard.astreaMergeTechnique", // generated-priority | restrictive
   astreaMergeMode: "shard.astreaMergeMode", // deprecated session migration key
   executionLogs: "shard.executionLogs", // structured history of generation/review runs
 };
@@ -105,15 +220,21 @@ function setStatus(text) {
 function loadJSON(key, fallback) {
   try {
     let raw = localStorage.getItem(key);
-    if (raw == null && LEGACY_STORE[key]) {
-      raw = localStorage.getItem(LEGACY_STORE[key]);
+    const legacyKey = LEGACY_STORE[key];
+    if (raw == null && legacyKey) {
+      raw = localStorage.getItem(legacyKey);
       if (raw != null) localStorage.setItem(key, raw);
     }
+    if (legacyKey && raw != null) localStorage.removeItem(legacyKey);
     return JSON.parse(raw) ?? fallback;
   }
   catch { return fallback; }
 }
 function saveJSON(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
+function removeStoredValue(key) {
+  localStorage.removeItem(key);
+  if (LEGACY_STORE[key]) localStorage.removeItem(LEGACY_STORE[key]);
+}
 
 
 function makeRequestId() {
@@ -213,9 +334,19 @@ function loadDeploymentCapabilities() {
   }).then((payload) => {
     const runtimeEndpoints = payload.api && payload.api.runtime_endpoints;
     if (runtimeEndpoints && typeof runtimeEndpoints === "object") {
-      Object.keys(SERVICES).forEach((key) => {
-        if (typeof runtimeEndpoints[key] === "string" && runtimeEndpoints[key]) {
-          SERVICES[key] = runtimeEndpoints[key];
+      const endpointKeys = {
+        prepare_terms: "prepareTerms",
+        resolve_rule: "resolveRule",
+        validate_model: "validateModel",
+        local_model_status: "localModelStatus",
+        download_local_model: "downloadLocalModel",
+      };
+      Object.keys(runtimeEndpoints).forEach((publicKey) => {
+        const key = endpointKeys[publicKey] || publicKey;
+        const endpoint = resolveRuntimeEndpoint(runtimeEndpoints[publicKey]);
+        if (Object.prototype.hasOwnProperty.call(SERVICES, key)
+            && endpoint) {
+          SERVICES[key] = endpoint;
         }
       });
     }
@@ -227,9 +358,11 @@ function loadDeploymentCapabilities() {
         ...(payload.providers || {}),
       },
     };
+    deploymentCapabilitiesLoaded = true;
     return deploymentCapabilities;
   }).catch((err) => {
     console.warn("Could not load deployment capabilities; using local defaults.", err);
+    deploymentCapabilitiesLoaded = true;
     return deploymentCapabilities;
   });
   return deploymentCapabilitiesRequest;

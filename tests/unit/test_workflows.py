@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from shard.application.workflows import (  # noqa: E402
-    generate_guide_workflow,
+    generate_batch_workflow,
     generate_rule_workflow,
     normalize_workflow_payload,
 )
@@ -24,7 +24,7 @@ class WorkflowPayloadTests(unittest.TestCase):
         payload = normalize_workflow_payload({
             "ontology": {"filename": "domain.ttl", "content": "ontology"},
             "rule": {"number": "BR-007", "title": "A title", "text": "A rule"},
-            "guide": {"filename": "rules.md", "content": "guide"},
+            "batch": {"filename": "rules.md", "content": "batch"},
             "inference": {
                 "provider": "databricks",
                 "generation_model": "generation-model",
@@ -53,7 +53,7 @@ class WorkflowPayloadTests(unittest.TestCase):
 
         self.assertEqual(payload["ontology_filename"], "domain.ttl")
         self.assertEqual(payload["business_rule"], "A rule")
-        self.assertEqual(payload["guide_content"], "guide")
+        self.assertEqual(payload["batch_content"], "batch")
         self.assertEqual(payload["llm_model"], "generation-model")
         self.assertEqual(payload["embedding_model"], "embedding-model")
         self.assertEqual(payload["inference_config"]["databricks"]["token"], "secret")
@@ -76,10 +76,10 @@ class WorkflowPayloadTests(unittest.TestCase):
 
 
 class CompleteWorkflowTests(unittest.TestCase):
-    def test_guide_workflow_without_astrea_returns_generated_document(self):
+    def test_batch_workflow_without_astrea_returns_generated_document(self):
         def generator(payload, event_callback=None):
             self.assertEqual(payload["ontology_content"], "ontology")
-            self.assertEqual(payload["guide_content"], "guide")
+            self.assertEqual(payload["batch_content"], "batch")
             self.assertEqual(payload["astrea_use_mode"], "none")
             return {
                 "shape_document": "generated ttl",
@@ -88,10 +88,10 @@ class CompleteWorkflowTests(unittest.TestCase):
 
         baseline_generator = Mock(side_effect=AssertionError("Astrea must not be called"))
         merger = Mock(side_effect=AssertionError("Merge must not be called"))
-        result = generate_guide_workflow(
+        result = generate_batch_workflow(
             {
                 "ontology": {"content": "ontology"},
-                "guide": {"content": "guide"},
+                "batch": {"content": "batch"},
                 "astrea": {"mode": "none"},
             },
             generator=generator,
@@ -99,7 +99,7 @@ class CompleteWorkflowTests(unittest.TestCase):
             merger=merger,
         )
 
-        self.assertEqual(result["workflow"], "guide-to-shapes")
+        self.assertEqual(result["workflow"], "batch-to-shapes")
         self.assertEqual(result["final_shape_document"], "generated ttl")
         self.assertIsNone(result["merge"])
         baseline_generator.assert_not_called()
@@ -124,10 +124,10 @@ class CompleteWorkflowTests(unittest.TestCase):
             self.assertEqual(payload["astrea_baseline"]["content"], "baseline ttl")
             return {"shape_document": "merged ttl", "valid": True}
 
-        result = generate_guide_workflow(
+        result = generate_batch_workflow(
             {
                 "ontology": {"content": "ontology"},
-                "guide": {"content": "guide"},
+                "batch": {"content": "batch"},
                 "astrea": {"mode": "both", "merge_technique": "restrictive"},
             },
             generator=generator,
@@ -136,7 +136,7 @@ class CompleteWorkflowTests(unittest.TestCase):
         )
 
         self.assertTrue(result["astrea"]["available"])
-        self.assertEqual(result["astrea"]["effective_mode"], "both")
+        self.assertEqual(result["astrea"]["effective_mode"], "evidence-and-merge")
         self.assertEqual(result["final_shape_document"], "merged ttl")
 
     def test_astrea_unavailability_continues_without_baseline_by_default(self):
@@ -147,10 +147,10 @@ class CompleteWorkflowTests(unittest.TestCase):
             self.assertEqual(payload["astrea_use_mode"], "none")
             return {"shape_document": "generated ttl", "summary": {"valid": 1}}
 
-        result = generate_guide_workflow(
+        result = generate_batch_workflow(
             {
                 "ontology": {"content": "ontology"},
-                "guide": {"content": "guide"},
+                "batch": {"content": "batch"},
                 "astrea": {"mode": "merge"},
             },
             generator=generator,
@@ -165,10 +165,10 @@ class CompleteWorkflowTests(unittest.TestCase):
 
     def test_astrea_fail_policy_propagates_unavailability(self):
         with self.assertRaises(AstreaUnavailableError):
-            generate_guide_workflow(
+            generate_batch_workflow(
                 {
                     "ontology": {"content": "ontology"},
-                    "guide": {"content": "guide"},
+                    "batch": {"content": "batch"},
                     "astrea": {"mode": "baseline", "failure_policy": "fail"},
                 },
                 generator=Mock(),
@@ -177,10 +177,10 @@ class CompleteWorkflowTests(unittest.TestCase):
                 ),
             )
 
-    def test_single_rule_uses_the_shared_guide_pipeline_and_escapes_html(self):
+    def test_single_rule_uses_the_shared_batch_pipeline_and_escapes_html(self):
         def generator(payload, event_callback=None):
-            self.assertIn("&lt;Asset&gt;", payload["guide_content"])
-            self.assertNotIn("<Asset>", payload["guide_content"])
+            self.assertIn("&lt;Asset&gt;", payload["batch_content"])
+            self.assertNotIn("<Asset>", payload["batch_content"])
             return {
                 "prefixes": "@prefix ex: <urn:example:> .",
                 "base_namespace": "urn:example:",
@@ -220,7 +220,7 @@ class CompleteWorkflowTests(unittest.TestCase):
 
     def test_required_workflow_inputs_have_clear_errors(self):
         with self.assertRaisesRegex(ValueError, "ontology.content"):
-            generate_guide_workflow({"guide": {"content": "guide"}}, generator=Mock())
+            generate_batch_workflow({"batch": {"content": "batch"}}, generator=Mock())
         with self.assertRaisesRegex(ValueError, "rule.text"):
             generate_rule_workflow({"ontology": {"content": "ontology"}}, generator=Mock())
 

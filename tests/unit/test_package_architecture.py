@@ -47,6 +47,50 @@ class PackageArchitectureTests(unittest.TestCase):
         prompts = sorted((SRC / "shard" / "resources" / "prompts").glob("*.json"))
         self.assertEqual([path.name for path in prompts], ["rule_general.json"])
 
+    def test_guide_is_narrative_only_and_does_not_return_as_a_resource_name(self):
+        retired = "".join(("gui", "de"))
+        roots = [
+            ROOT / name
+            for name in (
+                "frontend",
+                "src",
+                "tests",
+                "docs",
+                "examples",
+                "experiments",
+                "profiles",
+                "scripts",
+            )
+        ]
+        text_suffixes = {
+            ".cff", ".css", ".html", ".js", ".json", ".md", ".py",
+            ".toml", ".ttl", ".txt", ".yaml", ".yml",
+        }
+        paths = [ROOT / "README.md", ROOT / "pyproject.toml", ROOT / "MANIFEST.in"]
+        for directory in roots:
+            paths.extend(path for path in directory.rglob("*") if path.is_file())
+
+        for path in paths:
+            relative = path.relative_to(ROOT).as_posix().lower()
+            with self.subTest(path=relative):
+                self.assertNotIn(retired, relative)
+
+        forbidden_resource_fragments = (
+            "/guides/",
+            "guide.html",
+            "guide.js",
+            "guide_content",
+            "guide_filename",
+            "guide-to-rules",
+        )
+        for path in paths:
+            if path == Path(__file__).resolve() or path.suffix.lower() not in text_suffixes:
+                continue
+            content = path.read_text(encoding="utf-8").lower()
+            with self.subTest(path=path.relative_to(ROOT).as_posix().lower()):
+                for fragment in forbidden_resource_fragments:
+                    self.assertNotIn(fragment, content)
+
 
 if __name__ == "__main__":
     unittest.main()

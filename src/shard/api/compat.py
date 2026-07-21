@@ -13,6 +13,7 @@ from typing import FrozenSet
 from urllib.parse import urlsplit
 
 from shard.api.contract import endpoint_for_route
+from shard.api.errors import ApiException
 from shard.api.http import new_request_id, read_json, send_health, send_json, send_options
 from shard.api.operations import dispatch_post_operation
 
@@ -33,9 +34,6 @@ COMPATIBILITY_SERVICES = {
         9101,
         frozenset({
             "ontology.search",
-            "ontology.index.prepare",
-            "ontology.index.status",
-            "ontology.index.cancel",
         }),
     ),
     "shapes": CompatibilityService(
@@ -48,10 +46,9 @@ COMPATIBILITY_SERVICES = {
             "shapes.merge",
             "models.check",
             "models.local.status",
-            "models.local.download",
         }),
     ),
-    "guide": CompatibilityService("guide", 9103, frozenset({"guides.generate"})),
+    "batch": CompatibilityService("batch", 9103, frozenset({"batches.generate"})),
     "target-resolution": CompatibilityService(
         "target-resolution",
         9104,
@@ -98,7 +95,7 @@ def make_handler(service: CompatibilityService):
                 return
             try:
                 payload = read_json(self)
-            except ValueError as exc:
+            except ApiException as exc:
                 send_json(self, 400, {"error": str(exc)}, request_id=request_id)
                 return
             dispatch_post_operation(self, endpoint.operation, payload, request_id)

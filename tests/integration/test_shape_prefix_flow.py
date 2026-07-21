@@ -8,7 +8,7 @@ import unittest
 ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from shard.application.guide_generation import generate_guide_shapes
+from shard.application.batch_generation import generate_batch_shapes
 
 
 class PreferredShapePrefixFlowTests(unittest.TestCase):
@@ -16,15 +16,15 @@ class PreferredShapePrefixFlowTests(unittest.TestCase):
         ontology = (ROOT_DIR / "examples" / "asset-maintenance" / "ontology.ttl").read_text(
             encoding="utf-8"
         )
-        guide = """
-# Business Rules
+        batch = """
+# Data Constraints
 
 ## Rule
 
 - Number: BR-001
 - Title: Asset identifier
 
-### Business rule
+### Data constraint
 
 Every Asset must have exactly one asset identifier.
 """
@@ -55,12 +55,12 @@ asset-sh:AssetShape a sh:NodeShape ;
                 "attempts": 1,
             }
 
-        result = generate_guide_shapes(
+        result = generate_batch_shapes(
             {
                 "ontology_content": ontology,
                 "ontology_filename": "asset_maintenance_ontology.ttl",
-                "guide_content": guide,
-                "guide_filename": "rules.md",
+                "batch_content": batch,
+                "batch_filename": "rules.md",
                 "base_namespace": "http://example.org/asset-maintenance#",
                 "shape_namespace": "http://example.org/asset-maintenance/shapes/",
                 "shape_prefix": "asset-sh",

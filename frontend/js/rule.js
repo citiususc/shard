@@ -1,23 +1,37 @@
-/* rule.js — Workflow 1: business rule to single SHACL shape. */
+/* rule.js — Workflow 1: data constraint to single SHACL shape. */
 
 let entityFilter = "all";
 const TARGET_ROLE_KEYS = ["focus_nodes", "constraint_paths", "related_terms"];
 let targetRoles = emptyTargetRoles();
-let resolutionMeta = { resolvedBy: "", confidence: null };
+let resolutionMeta = { resolvedBy: "", resolutionScore: null, scoreKind: "none" };
 let lastCandidates = [];
 let semanticSearchActive = false;
 let ruleGenerationLogId = null;
 let draggedResolvedTerm = null;
+const DEFAULT_RULE_METADATA = Object.freeze({
+  number: "RULE-001",
+  title: "Data constraint",
+});
+let activeRuleMetadata = { ...DEFAULT_RULE_METADATA };
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadDeploymentCapabilities();
   wireReset("reset-demo");
-  wireSessionControls();
+  wireSessionControls({
+    workflow: "rule",
+    getWorkspaceState: ruleWorkspaceState,
+    applyWorkspaceState: applyRuleWorkspaceState,
+  });
   wireModelControls();
   wireShapeValidationProfileControls();
   wireAstreaBaselineControls();
   wireExport("export-shapes", () => "");
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
+  wireAcceptedShapesControls(
+    byId("accepted-list"),
+    byId("coverage-tag"),
+    byId("remove-all-accepted-shapes"),
+  );
 
   // IDE-style Turtle highlighting (attach before ontology wiring so the
   // prefixes editor refreshes when its value is seeded).
@@ -27,6 +41,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireOntologyControls(() => {
     clearSemanticResults(false);
     clearResolvedTerms();
+    renderEntities();
     void refreshAstreaBaselineForOntology();
   });
 
@@ -43,6 +58,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   byId("entity-search").addEventListener("input", renderEntities);
   byId("business-rule").addEventListener("input", () => {
+    activeRuleMetadata = { ...DEFAULT_RULE_METADATA };
     clearSemanticResults(false);
     clearResolvedTerms();
     updateGenerateAvailability();
@@ -63,6 +79,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateGenerateAvailability();
 });
 
+function ruleWorkspaceState() {
+  return {
+    workflow: "rule",
+    domainContext: byId("domain-context").value,
+    generationGuidance: byId("generation-guidance").value,
+    dataConstraint: {
+      number: activeRuleMetadata.number,
+      title: activeRuleMetadata.title,
+      text: byId("business-rule").value,
+    },
+  };
+}
+
+function applyRuleWorkspaceState(workspace) {
+  byId("domain-context").value = String(workspace.domainContext || "");
+  byId("generation-guidance").value = String(workspace.generationGuidance || "");
+  const constraint = workspace.dataConstraint || workspace.rule || {};
+  activeRuleMetadata = {
+    number: String(constraint.number || DEFAULT_RULE_METADATA.number),
+    title: String(constraint.title || DEFAULT_RULE_METADATA.title),
+  };
+  byId("business-rule").value = String(constraint.text || "");
+}
+
+function activeBusinessRule(text) {
+  return apiBusinessRule(
+    text,
+    activeRuleMetadata.number,
+    activeRuleMetadata.title,
+  );
+}
+
 function emptyTargetRoles() {
   return { focus_nodes: [], constraint_paths: [], related_terms: [] };
 }
@@ -78,6 +126,17 @@ function allResolvedTerms() {
 function roleForTerm(term) {
   const key = termKey(term);
   return TARGET_ROLE_KEYS.find((role) => targetRoles[role].some((item) => termKey(item) === key)) || "";
+}
+
+function ontologyReferenceValues(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .filter(Boolean)
+    .map((item) => {
+      if (typeof item === "string") return item;
+      return String(item.iri || item.full_iri || item.label || "");
+    })
+    .filter(Boolean);
 }
 
 function defaultRoleForTerm(term) {
@@ -130,7 +189,7 @@ function addResolvedTerm(term, role = defaultRoleForTerm(term), render = true) {
   removeResolvedTerm(term, false);
   const validRole = validRolesForTerm(term).includes(role) ? role : defaultRoleForTerm(term);
   targetRoles[validRole].push(term);
-  resolutionMeta = { resolvedBy: "manual", confidence: null };
+  resolutionMeta = { resolvedBy: "manual", resolutionScore: null, scoreKind: "none" };
   if (render) {
     renderResolvedTerms();
     renderEntities();
@@ -192,7 +251,7 @@ function startResolvedTermDrag(event, term, role) {
 
 function clearResolvedTerms(render = true) {
   targetRoles = emptyTargetRoles();
-  resolutionMeta = { resolvedBy: "", confidence: null };
+  resolutionMeta = { resolvedBy: "", resolutionScore: null, scoreKind: "none" };
   if (render) {
     renderResolvedTerms();
     renderEntities();
@@ -245,12 +304,12 @@ function renderResolvedTerms() {
     ? (resolutionMeta.resolvedBy === "manual" ? "Manual" : `Via ${resolutionMeta.resolvedBy}`)
     : "Not resolved";
   byId("clear-resolved-terms").disabled = count === 0;
-  const confidence = resolutionMeta.confidence == null
+  const resolutionScore = resolutionMeta.resolutionScore == null
     ? ""
-    : ` · confidence ${Number(resolutionMeta.confidence).toFixed(2)}`;
-  byId("resolution-status").textContent = count
-    ? `${count} ontology term${count === 1 ? "" : "s"} in this rule context${confidence}.`
-    : "Resolve the business rule automatically or add ontology terms from the search panel.";
+    : ` · ${resolutionMeta.scoreKind.replaceAll("_", " ")} score ${Number(resolutionMeta.resolutionScore).toFixed(2)}`;
+  signal.title = count
+    ? `${count} ontology term${count === 1 ? "" : "s"} in this rule context${resolutionScore}.`
+    : "No ontology terms resolved.";
   byId("generate-shape").textContent = count
     ? "Generate SHACL shape"
     : "Resolve and generate SHACL shape";
@@ -278,7 +337,12 @@ function renderEntities() {
   const items = source.filter((e) => {
     if (entityFilter !== "all" && e.type !== entityFilter) return false;
     if (!q) return true;
-    return [e.label, e.iri, e.domain, e.range].some((v) => String(v || "").toLowerCase().includes(q));
+    return [
+      e.label,
+      e.iri,
+      ...ontologyReferenceValues(e.domain),
+      ...ontologyReferenceValues(e.range),
+    ].some((value) => String(value || "").toLowerCase().includes(q));
   });
 
   items.slice(0, 400).forEach((e) => {
@@ -288,10 +352,11 @@ function renderEntities() {
     card.className = "entity-card"
       + (candidate ? " ranked" : "")
       + (selectedRole ? " active" : "");
+    const domains = ontologyReferenceValues(e.domain);
     card.innerHTML =
       (candidate ? `<div class="score">${candidate.score}</div>` : "") +
       `<strong>${esc(e.label)}</strong>` +
-      `<span>${esc(e.iri)}${e.type === "property" && e.domain ? " · domain " + esc(e.domain) : ""}</span>` +
+      `<span>${esc(e.iri)}${e.type === "property" && domains.length ? " · domain " + esc(domains.join(", ")) : ""}</span>` +
       (selectedRole
         ? `<small class="entity-reason">${esc(roleLabel(selectedRole))}</small>`
         : candidate ? `<small class="entity-reason">${esc((candidate.reasons || []).join(" · "))}</small>` : "");
@@ -317,7 +382,7 @@ function clearSemanticResults(render = true) {
   const clear = byId("clear-related-terms");
   if (clear) clear.hidden = true;
   const status = byId("ontology-search-status");
-  if (status) status.textContent = "Search by text or rank terms against the business rule.";
+  if (status) status.textContent = "Search by text, rank and resolve ontology terms against the data constraint, or add them manually.";
   if (render) renderEntities();
 }
 
@@ -329,15 +394,17 @@ function ontologyTermByTarget(ontology, target) {
 
 function applyResolvedRoles(row, ontology) {
   targetRoles = emptyTargetRoles();
+  const resolvedRoles = row.target_roles || row;
   TARGET_ROLE_KEYS.forEach((role) => {
-    (row[role] || []).forEach((target) => {
-      const term = ontologyTermByTarget(ontology, target);
+    (resolvedRoles[role] || []).forEach((target) => {
+      const term = ontologyTermByTarget(ontology, target.iri || target);
       if (term && !roleForTerm(term)) targetRoles[role].push(term);
     });
   });
   resolutionMeta = {
     resolvedBy: row.resolved_by || "none",
-    confidence: row.confidence,
+    resolutionScore: row.resolution_score ?? row.confidence ?? null,
+    scoreKind: row.score_kind || "none",
   };
   renderResolvedTerms();
 }
@@ -346,32 +413,26 @@ async function resolveBusinessRule() {
   const o = getOntology();
   if (!o) { setStatus("Load an ontology first"); return false; }
   const rule = byId("business-rule").value.trim();
-  if (!rule) { setStatus("Write a business rule first"); return false; }
+  if (!rule) { setStatus("Write a data constraint first"); return false; }
 
   const m = getModels();
   const button = byId("analyze-rule");
   button.disabled = true;
-  setStatus("Resolving business rule…");
+  setStatus("Resolving data constraint…");
   byId("ontology-search-status").textContent = "Resolving focus nodes, constrained properties, and related terms…";
   try {
     const data = await fetchJSON(SERVICES.resolveRule, {
       method: "POST",
       body: JSON.stringify({
-        business_rule: rule,
-        ontology_content: o.content,
-        ontology_filename: o.filename || "ontology.ttl",
-        ontology_hash: o.contentHash || "",
-        embedding_model: m.embeddingModel,
-        config_fingerprint: modelConfigFingerprint(m),
-        inference_config: getInferenceConfig(),
-        model: m.llmModel,
-        provider: m.provider,
-        semantic_threshold: 0.60,
-        resolver_llm_fallback: true,
+        input_type: "rule",
+        ontology: apiOntologyInput(o),
+        rule: activeBusinessRule(rule),
+        inference: apiInferenceOptions(m),
+        resolver: { semantic_threshold: 0.60, llm_fallback: true },
       }),
-    }, { label: "Resolve business rule", timeoutMs: 120000 });
+    }, { label: "Resolve data constraint", timeoutMs: 120000 });
     const row = (data.rules || [])[0];
-    if (!row) throw new Error("The resolver returned no business-rule result.");
+    if (!row) throw new Error("The resolver returned no data-constraint result.");
     lastCandidates = row.candidates || [];
     semanticSearchActive = true;
     byId("clear-related-terms").hidden = false;
@@ -380,7 +441,7 @@ async function resolveBusinessRule() {
     byId("ontology-search-status").textContent =
       count
         ? `${count} term${count === 1 ? "" : "s"} resolved via ${resolverSignalLabel(row.resolved_by)}. Select ontology terms to refine the context.`
-        : "No ontology terms reached the resolver confidence threshold. Add terms manually or revise the rule.";
+        : "No ontology terms reached the active resolver score threshold. Add terms manually or revise the data constraint.";
     renderEntities();
     setStatus(count ? `Resolved · ${count}` : "Rule unresolved");
     return count > 0;
@@ -398,13 +459,13 @@ async function generateShape() {
   const o = getOntology();
   const rule = byId("business-rule").value.trim();
   if (!o) { setStatus("Load an ontology first"); return; }
-  if (!rule) { setStatus("Write a business rule first"); return; }
+  if (!rule) { setStatus("Write a data constraint first"); return; }
   if (!allResolvedTerms().length) {
     const resolved = await resolveBusinessRule();
     if (!resolved) {
       const panel = byId("validation-panel");
       panel.className = "validation-panel shape-error";
-      panel.textContent = "The rule could not be resolved automatically. Review the rule or add ontology terms manually before generation.";
+      panel.textContent = "The data constraint could not be resolved automatically. Review it or add ontology terms manually before generation.";
       return;
     }
   }
@@ -422,7 +483,7 @@ async function generateShape() {
     level: "info",
     kind: "rule",
     stage: "rule",
-    message: `Business rule · ${rule || "(empty rule)"}`,
+    message: `Data constraint · ${rule || "(empty constraint)"}`,
   });
   TARGET_ROLE_KEYS.forEach((role) => {
     const values = targetRoles[role].map((term) => term.iri || term.full_iri).join(", ");
@@ -490,27 +551,32 @@ async function generateShape() {
     const data = await fetchJSON(SERVICES.build, {
       method: "POST",
       body: JSON.stringify({
-        business_rule: rule,
-        target: primaryTerm,
-        target_roles: targetRoles,
-        prefixes: o.prefixes,
-        ontology_content: o.content, base_namespace: o.baseNamespace,
-        shape_namespace: o.shapeNamespace,
-        shape_prefix: o.shapePrefix,
-        domain_context: byId("domain-context").value.trim(),
-        generation_guidance: byId("generation-guidance").value.trim(),
-        validation_profiles: getShapeValidationProfiles(),
-        astrea_use_mode: getAstreaUseMode(),
-        astrea_merge_technique: getAstreaMergeTechnique(),
-        astrea_baseline: astreaEvidencePayload(),
-        model: m.llmModel, provider: m.provider, temperature: m.temperature,
-        inference_config: getInferenceConfig(),
+        ontology: apiOntologyInput(o),
+        rule: activeBusinessRule(rule),
+        target_roles: {
+          focus_nodes: (targetRoles.focus_nodes || []).map(apiTermReference),
+          constraint_paths: (targetRoles.constraint_paths || []).map(apiTermReference),
+          related_terms: (targetRoles.related_terms || []).map(apiTermReference),
+        },
+        inference: apiInferenceOptions(m),
+        generation: {
+          prefixes: o.prefixes,
+          base_namespace: o.baseNamespace,
+          shape_namespace: o.shapeNamespace,
+          shape_prefix: o.shapePrefix,
+          domain_context: byId("domain-context").value.trim(),
+          generation_guidance: byId("generation-guidance").value.trim(),
+          llm_review: true,
+          review_max_attempts: 3,
+        },
+        validation: apiValidationOptions(),
+        astrea: apiAstreaOptions(),
       }),
-    }, { label: "Generate SHACL shape", timeoutMs: 120000, requestId });
+    }, { label: "Generate SHACL shape", timeoutMs: 600000, requestId });
     updateExecutionRun(ruleGenerationLogId, {
       metadata: { requestId: data.request_id || requestId },
     });
-    byId("shape-editor").value = data.shape || "";
+    byId("shape-editor").value = data.shape_document || "";
     refreshHighlight("shape-editor");
     if (data.logs) {
       appendExecutionEntry(ruleGenerationLogId, {
@@ -532,6 +598,13 @@ async function generateShape() {
       panel.className = "validation-panel";
       panel.textContent = data.message || "No shape could be justified from this rule.";
     } else if (data.valid) {
+      if (data.llm_review_applied) {
+        appendExecutionEntry(ruleGenerationLogId, {
+          level: "pass", stage: "review", indent: 1,
+          message: semanticReviewSummary(data),
+          details: semanticReviewDetails(data),
+        });
+      }
       appendExecutionEntry(ruleGenerationLogId, {
         level: "pass", stage: "syntax", indent: 1, message: "Turtle syntax is valid",
       });
@@ -665,7 +738,7 @@ async function acceptCurrent() {
     }
     const label = targetRoles.focus_nodes.map((term) => term.iri).join(", ")
       || targetRoles.constraint_paths.map((term) => term.iri).join(", ")
-      || "Business rule";
+      || "Data constraint";
     acceptShape(label, shape);
     appendExecutionEntry(logId, {
       level: "done", kind: "summary", stage: "accept", message: "Shape revalidated and accepted",
@@ -711,7 +784,8 @@ function logRuleGenerationFailure(data = {}) {
   appendExecutionEntry(ruleGenerationLogId, {
     level: "error", stage: type, indent: 1,
     message: labels[type] || "Shape generation failed",
-    details: data.error || data.message,
+    details: [semanticReviewDetails(data), data.error || data.message]
+      .filter(Boolean).join("\n"),
   });
   appendExecutionEntry(ruleGenerationLogId, {
     level: "error", kind: "summary", stage: "summary",

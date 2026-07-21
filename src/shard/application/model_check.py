@@ -1,5 +1,7 @@
 """Check whether user-configured inference models are reachable."""
 
+from shard.deployment.operational import operational_settings
+
 def validate_model(payload):
     """Lightweight availability check before a custom model is added in the UI."""
     provider = str(payload.get("provider") or "").strip().lower()
@@ -22,6 +24,7 @@ def validate_model(payload):
         if not token or not base_url:
             return {
                 "ok": False,
+                "error_code": "provider_unavailable",
                 "message": "Remote inference is not configured on this deployment.",
             }
 
@@ -42,16 +45,45 @@ def validate_model(payload):
             }
 
         try:
-            res = httpx.post(url, headers=headers, json=body, timeout=20)
-        except Exception as exc:
-            return {"ok": False, "message": f"Could not reach remote inference: {exc}"}
+            settings = operational_settings()
+            res = httpx.post(
+                url,
+                headers=headers,
+                json=body,
+                timeout=httpx.Timeout(
+                    connect=settings.http_connect_timeout_seconds,
+                    read=settings.model_timeout_seconds,
+                    write=settings.http_read_timeout_seconds,
+                    pool=settings.http_connect_timeout_seconds,
+                ),
+            )
+        except httpx.TimeoutException:
+            return {
+                "ok": False,
+                "error_code": "provider_timeout",
+                "message": "Remote inference did not respond before the timeout.",
+            }
+        except httpx.HTTPError:
+            return {
+                "ok": False,
+                "error_code": "provider_unavailable",
+                "message": "Remote inference could not be reached.",
+            }
 
         if 200 <= res.status_code < 300:
             return {"ok": True, "message": f"Model '{model}' is available."}
-        detail = res.text[:500]
+        error_code = "model_unavailable"
+        if res.status_code in {401, 403}:
+            error_code = "provider_authentication_failed"
+        elif res.status_code == 429:
+            error_code = "rate_limited"
+        elif res.status_code >= 500:
+            error_code = "provider_unavailable"
         return {
             "ok": False,
-            "message": f"Remote inference rejected '{model}' ({res.status_code}): {detail}",
+            "error_code": error_code,
+            "upstream_status": res.status_code,
+            "message": f"Remote inference could not use model '{model}'.",
         }
 
     # Hugging Face: check repository visibility/access without downloading weights.
@@ -63,5 +95,9 @@ def validate_model(payload):
         pipeline = getattr(info, "pipeline_tag", None)
         suffix = f" ({pipeline})" if pipeline else ""
         return {"ok": True, "message": f"Local model '{model}' is available{suffix}."}
-    except Exception as exc:
-        return {"ok": False, "message": f"Local model '{model}' is not available: {exc}"}
+    except Exception:
+        return {
+            "ok": False,
+            "error_code": "model_unavailable",
+            "message": f"Local model '{model}' is not available.",
+        }

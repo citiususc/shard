@@ -8,6 +8,7 @@ by the application and the architecture documented for the demo cannot drift.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import re
 from typing import Dict, Optional, Tuple
 
 from shard import __description__, __title__, __version__
@@ -47,6 +48,8 @@ class EndpointSpec:
     role: str
     transport: str
     summary: str
+    description: str = ""
+    success_status: int = 200
 
 
 LOGICAL_SERVICES: Tuple[LogicalService, ...] = (
@@ -57,8 +60,8 @@ LOGICAL_SERVICES: Tuple[LogicalService, ...] = (
     ),
     LogicalService(
         "rule-grounding",
-        "Business Rule Grounding Service",
-        "Ground business rules in auditable, role-grouped ontology terms without generating shapes.",
+        "Data Constraint Grounding Service",
+        "Ground data constraints in auditable, role-grouped ontology terms without generating shapes.",
     ),
     LogicalService(
         "shape-generation",
@@ -73,7 +76,7 @@ LOGICAL_SERVICES: Tuple[LogicalService, ...] = (
     LogicalService(
         "authoring-workflow",
         "Authoring Workflow Service",
-        "Orchestrate complete Rule to Shape and Batch to Rules authoring workflows.",
+        "Orchestrate complete Rule-to-Shape and Guide-to-Shapes authoring workflows through single-rule and batch API resources.",
     ),
 )
 
@@ -95,14 +98,20 @@ ENDPOINTS: Tuple[EndpointSpec, ...] = (
         "Render interactive Swagger UI documentation for the API contract.",
     ),
     EndpointSpec(
-        "workflows.rule.generate", "POST", f"{API_PREFIX}/workflows/rule-to-shape", None,
-        "authoring-workflow", PRIMARY_ROLE, "json",
-        "Resolve one business rule and generate a validated, ontology-grounded SHACL document.",
+        "system.redoc", "GET", f"{API_PREFIX}/redoc", None,
+        None, SYSTEM_ROLE, "html",
+        "Render reference-oriented ReDoc documentation for the API contract.",
     ),
     EndpointSpec(
-        "workflows.guide.generate", "POST", f"{API_PREFIX}/workflows/guide-to-shapes", None,
+        "workflows.rule.generate", "POST", f"{API_PREFIX}/workflows/rule-to-shape", None,
         "authoring-workflow", PRIMARY_ROLE, "json",
-        "Generate and consolidate validated SHACL documents from a structured business-rule batch.",
+        "Resolve one data constraint and generate a validated, ontology-grounded SHACL document.",
+    ),
+    EndpointSpec(
+        "workflows.batch.generate", "POST", f"{API_PREFIX}/workflows/batch-to-shapes", None,
+        "authoring-workflow", PRIMARY_ROLE, "json",
+        "Generate and consolidate validated SHACL documents from a structured data-constraint batch.",
+        "Batch-to-Shapes API operation implementing the Guide-to-Shapes workflow. Returns one consolidated JSON result after every constraint has been resolved, generated and validated.",
     ),
     EndpointSpec(
         "ontology.parse", "POST", f"{API_PREFIX}/ontology/parse", "/parse-ontology",
@@ -112,52 +121,63 @@ ENDPOINTS: Tuple[EndpointSpec, ...] = (
     EndpointSpec(
         "ontology.search", "POST", f"{API_PREFIX}/ontology/search", "/find-relevant-terms",
         "ontology", PRIMARY_ROLE, "json",
-        "Rank ontology terms for a business rule.",
+        "Rank ontology terms for a data constraint.",
+        "Ranks catalog terms for retrieval. It does not assign focus-node or constraint-path roles; use rules/resolve-targets for grounded rule interpretation.",
     ),
     EndpointSpec(
-        "ontology.index.prepare", "POST", f"{API_PREFIX}/ontology/index",
-        "/prepare-ontology-embeddings", "ontology", AUXILIARY_ROLE, "json",
-        "Prepare and cache ontology-term embeddings.",
+        "ontology.index.create", "POST", f"{API_PREFIX}/ontology/indexes",
+        None, "ontology", AUXILIARY_ROLE, "json",
+        "Create an ontology embedding-index job.",
+        "Starts asynchronous preparation and returns a stable job resource.",
+        success_status=202,
     ),
     EndpointSpec(
-        "ontology.index.status", "POST", f"{API_PREFIX}/ontology/index/status",
-        "/ontology-embedding-status", "ontology", AUXILIARY_ROLE, "json",
-        "Inspect ontology embedding preparation.",
+        "ontology.index.get", "GET", f"{API_PREFIX}/ontology/indexes/{{job_id}}",
+        None, "ontology", AUXILIARY_ROLE, "json",
+        "Inspect an ontology embedding-index job.",
+        "Returns current state and progress for a job created by POST /ontology/indexes.",
     ),
     EndpointSpec(
-        "ontology.index.cancel", "POST", f"{API_PREFIX}/ontology/index/cancel",
-        "/cancel-ontology-embeddings", "ontology", AUXILIARY_ROLE, "json",
-        "Cancel matching ontology embedding jobs.",
+        "ontology.index.delete", "DELETE", f"{API_PREFIX}/ontology/indexes/{{job_id}}",
+        None, "ontology", AUXILIARY_ROLE, "json",
+        "Cancel an ontology embedding-index job.",
+        "Requests cooperative cancellation. Completed and failed jobs produce a 409 conflict.",
     ),
     EndpointSpec(
         "rules.resolve-targets", "POST", f"{API_PREFIX}/rules/resolve-targets",
         "/resolve-rule-targets", "rule-grounding", PRIMARY_ROLE, "json",
-        "Resolve business rules to focus nodes, constrained paths and related terms.",
+        "Resolve data constraints to focus nodes, constrained paths and related terms.",
+        "Interprets either one rule or a structured batch and assigns auditable ontology-term roles. This is semantically richer than ontology/search.",
     ),
     EndpointSpec(
         "shapes.build", "POST", f"{API_PREFIX}/shapes/build", "/build-shacl-shape",
         "shape-generation", PRIMARY_ROLE, "json",
         "Generate and validate one grounded SHACL rule constraint document.",
+        "Generates a SHACL document from a previously grounded rule context and validates the resulting document. It does not resolve ontology targets.",
     ),
     EndpointSpec(
         "shapes.validate", "POST", f"{API_PREFIX}/shapes/validate", "/validate-shape",
         "shape-assurance", PRIMARY_ROLE, "json",
         "Validate Turtle syntax and active SHACL for SHACL profiles.",
+        "Validates edited, imported or externally generated SHACL without invoking a generation model.",
     ),
     EndpointSpec(
         "baselines.astrea.generate", "POST", f"{API_PREFIX}/baselines/astrea",
         "/generate-astrea-baseline", "shape-assurance", PRIMARY_ROLE, "json",
         "Generate ontology-derived baseline shapes through the Astrea service.",
+        "Calls Astrea using the supplied ontology. A client-supplied baseline is represented by BaselineInput in workflows and merge requests and does not call Astrea.",
     ),
     EndpointSpec(
         "shapes.merge", "POST", f"{API_PREFIX}/shapes/merge", "/merge-shapes",
         "shape-assurance", PRIMARY_ROLE, "json",
         "Merge generated shapes with an ontology-derived baseline.",
+        "Combines a generated document and a supplied baseline using a deterministic merge strategy, then validates the result.",
     ),
     EndpointSpec(
-        "guides.generate", "POST", f"{API_PREFIX}/guides/generate", "/generate-from-guide",
+        "batches.generate", "POST", f"{API_PREFIX}/batches/generate", "/generate-from-batch",
         "authoring-workflow", PRIMARY_ROLE, "sse",
-        "Generate shapes from a business-rule batch and stream progress by rule.",
+        "Generate shapes from a data-constraint batch and stream progress by constraint.",
+        "Batch API operation implementing the Guide-to-Shapes workflow. Returns structured JSON Server-Sent Events; POST /api/v1/workflows/batch-to-shapes returns the consolidated JSON result instead.",
     ),
     EndpointSpec(
         "models.check", "POST", f"{API_PREFIX}/models/check", "/validate-model",
@@ -170,9 +190,21 @@ ENDPOINTS: Tuple[EndpointSpec, ...] = (
         "Check whether a local model snapshot has already been downloaded.",
     ),
     EndpointSpec(
-        "models.local.download", "POST", f"{API_PREFIX}/models/local/download",
-        "/download-local-model", None, AUXILIARY_ROLE, "sse",
-        "Explicitly download a local model snapshot and stream progress.",
+        "models.local.download.create", "POST", f"{API_PREFIX}/models/local/downloads",
+        None, None, AUXILIARY_ROLE, "json",
+        "Create a local-model download job.",
+        "Starts a local download in the local deployment profile and returns a stable job resource.",
+        success_status=202,
+    ),
+    EndpointSpec(
+        "models.local.download.get", "GET", f"{API_PREFIX}/models/local/downloads/{{job_id}}",
+        None, None, AUXILIARY_ROLE, "json",
+        "Inspect a local-model download job.",
+    ),
+    EndpointSpec(
+        "models.local.download.delete", "DELETE", f"{API_PREFIX}/models/local/downloads/{{job_id}}",
+        None, None, AUXILIARY_ROLE, "json",
+        "Cancel a local-model download job.",
     ),
     EndpointSpec(
         "system.capabilities", "GET", f"{API_PREFIX}/capabilities", "/api/capabilities",
@@ -203,7 +235,26 @@ def endpoint_for_operation(operation: str) -> EndpointSpec:
 
 def endpoint_for_route(method: str, path: str) -> Optional[EndpointSpec]:
     """Resolve a canonical or legacy route to its endpoint specification."""
-    return _BY_ROUTE.get((str(method or "").upper(), str(path or "")))
+    endpoint, _ = match_endpoint(method, path)
+    return endpoint
+
+
+def match_endpoint(method: str, path: str) -> Tuple[Optional[EndpointSpec], Dict[str, str]]:
+    """Resolve an endpoint and extract path parameters from route templates."""
+    normalized_method = str(method or "").upper()
+    normalized_path = str(path or "")
+    direct = _BY_ROUTE.get((normalized_method, normalized_path))
+    if direct is not None:
+        return direct, {}
+    for endpoint in ENDPOINTS:
+        if endpoint.method != normalized_method or "{" not in endpoint.path:
+            continue
+        names = re.findall(r"\{([^}]+)\}", endpoint.path)
+        pattern = "^" + re.sub(r"\{[^}]+\}", r"([^/]+)", endpoint.path) + "$"
+        match = re.match(pattern, normalized_path)
+        if match:
+            return endpoint, dict(zip(names, match.groups()))
+    return None, {}
 
 
 def public_endpoint_map() -> Dict[str, str]:
@@ -234,27 +285,20 @@ def api_catalog() -> Dict[str, object]:
 _FRONTEND_OPERATIONS = {
     "capabilities": "system.capabilities",
     "parse": "ontology.parse",
-    "terms": "ontology.search",
-    "prepareTerms": "ontology.index.prepare",
-    "termStatus": "ontology.index.status",
-    "cancelTerms": "ontology.index.cancel",
-    "resolveRule": "rules.resolve-targets",
+    "prepare_terms": "ontology.index.create",
+    "resolve_rule": "rules.resolve-targets",
     "build": "shapes.build",
     "validate": "shapes.validate",
     "astrea": "baselines.astrea.generate",
     "merge": "shapes.merge",
-    "validateModel": "models.check",
-    "localModelStatus": "models.local.status",
-    "downloadLocalModel": "models.local.download",
-    "guide": "guides.generate",
+    "validate_model": "models.check",
+    "local_model_status": "models.local.status",
+    "download_local_model": "models.local.download.create",
+    "batch": "batches.generate",
 }
 
 _SPLIT_SERVICE_ORIGINS = {
     "ontology.parse": "http://127.0.0.1:9100",
-    "ontology.search": "http://127.0.0.1:9101",
-    "ontology.index.prepare": "http://127.0.0.1:9101",
-    "ontology.index.status": "http://127.0.0.1:9101",
-    "ontology.index.cancel": "http://127.0.0.1:9101",
     "rules.resolve-targets": "http://127.0.0.1:9104",
     "shapes.build": "http://127.0.0.1:9102",
     "shapes.validate": "http://127.0.0.1:9102",
@@ -262,8 +306,7 @@ _SPLIT_SERVICE_ORIGINS = {
     "shapes.merge": "http://127.0.0.1:9102",
     "models.check": "http://127.0.0.1:9102",
     "models.local.status": "http://127.0.0.1:9102",
-    "models.local.download": "http://127.0.0.1:9102",
-    "guides.generate": "http://127.0.0.1:9103",
+    "batches.generate": "http://127.0.0.1:9103",
 }
 
 
@@ -292,6 +335,11 @@ def frontend_endpoint_map(layout: str = UNIFIED_LAYOUT) -> Dict[str, str]:
     endpoints = {}
     for frontend_key, operation in _FRONTEND_OPERATIONS.items():
         endpoint = endpoint_for_operation(operation)
+        if operation in {
+            "ontology.index.create", "models.local.download.create"
+        }:
+            endpoints[frontend_key] = endpoint.path
+            continue
         if selected_layout == UNIFIED_LAYOUT or operation == "system.capabilities":
             endpoints[frontend_key] = endpoint.path
             continue

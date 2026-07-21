@@ -10,7 +10,9 @@ from rdflib.namespace import RDF, SH
 from shard.baselines.graph import _GraphCopier, _bind_namespaces
 from shard.baselines.io import parse_baseline_shapes
 
-MERGE_TECHNIQUES = {"priority-llm", "restrictive"}
+MERGE_STRATEGIES = {"generated-priority", "restrictive"}
+MERGE_STRATEGY_ALIASES = {"priority-llm": "generated-priority"}
+MERGE_TECHNIQUES = MERGE_STRATEGIES | set(MERGE_STRATEGY_ALIASES)
 
 _HIGHER_WINS = {
     SH.minCount,
@@ -27,6 +29,8 @@ _LOWER_WINS = {
 _TRUE_WINS = {SH.closed, SH.uniqueLang}
 _SET_INTERSECTION = {SH["in"], SH.languageIn}
 _EQUALITY_CHECK = {SH.datatype, SH["class"]}
+_LOGICAL_UNION = {SH["and"]}
+_LOGICAL_GENERATED_PRIORITY = {SH["or"], SH.xone, SH["not"]}
 _KEEP_ALL = {SH.pattern, SH.hasValue}
 _GENERATED_METADATA = {
     SH.name,
@@ -239,6 +243,7 @@ class _RestrictiveMerger(_MergerBase):
             values = self._values(self.generated, generated_shapes, predicate, "generated")
             values += self._values(self.astrea, astrea_shapes, predicate, "astrea")
             self._add_values(canonical, predicate, self._merge_constraint(predicate, values, canonical))
+        self._warn_incompatible_bounds(canonical)
         return canonical
 
     def _merge_node_group(
@@ -315,6 +320,7 @@ class _RestrictiveMerger(_MergerBase):
             values = self._values(self.generated, generated_nodes, predicate, "generated")
             values += self._values(self.astrea, astrea_nodes, predicate, "astrea")
             self._add_values(canonical, predicate, self._merge_constraint(predicate, values, canonical))
+        self._warn_incompatible_bounds(canonical)
         return canonical
 
     def _add_values(self, subject: Any, predicate: URIRef, values: Sequence[_Value]) -> None:
@@ -364,6 +370,35 @@ class _RestrictiveMerger(_MergerBase):
             Collection(self.output, head, sorted(intersection, key=str))
             return [_Value(head, None, "merged")]
 
+        if predicate in _LOGICAL_UNION:
+            lists = [(value, _list_members(value.graph, value.node)) for value in values]
+            lists = [(value, members) for value, members in lists if members is not None]
+            if not lists:
+                return [next((value for value in values if value.source == "generated"), values[0])]
+            members = []
+            seen = set()
+            for value, group in lists:
+                for member in group:
+                    key = str(member)
+                    if key not in seen:
+                        seen.add(key)
+                        members.append(
+                            self._copy(value.graph, member)
+                            if value.graph is not None and isinstance(member, BNode)
+                            else member
+                        )
+            head = BNode()
+            Collection(self.output, head, members)
+            return [_Value(head, None, "merged")]
+
+        if predicate in _LOGICAL_GENERATED_PRIORITY:
+            if len(values) > 1:
+                self.warnings.append(
+                    f"{shape} {predicate}: logical constraints could not be combined safely; "
+                    "kept the generated constraint."
+                )
+            return [next((value for value in values if value.source == "generated"), values[0])]
+
         if predicate == SH.nodeKind:
             kinds = [value for value in values if isinstance(value.node, URIRef)]
             if not kinds:
@@ -387,6 +422,23 @@ class _RestrictiveMerger(_MergerBase):
             return generated or [values[0]]
 
         return list(values)
+
+    def _warn_incompatible_bounds(self, shape: Any) -> None:
+        """Report deterministic restrictive results that are internally contradictory."""
+        pairs = (
+            (SH.minCount, SH.maxCount),
+            (SH.minLength, SH.maxLength),
+            (SH.minInclusive, SH.maxInclusive),
+            (SH.minExclusive, SH.maxExclusive),
+        )
+        for minimum_predicate, maximum_predicate in pairs:
+            minimum = _as_number(self.output.value(shape, minimum_predicate))
+            maximum = _as_number(self.output.value(shape, maximum_predicate))
+            if minimum is not None and maximum is not None and minimum > maximum:
+                self.warnings.append(
+                    f"{shape}: restrictive merge produced incompatible "
+                    f"{minimum_predicate}={minimum:g} and {maximum_predicate}={maximum:g}."
+                )
 
 
 def _simple_path(graph: Graph, shape: Any) -> Optional[URIRef]:
@@ -442,18 +494,19 @@ def merge_shape_graphs(
 ) -> Tuple[Graph, Dict[str, Any]]:
     """Merge parsed Astrea and generated SHACL graphs using one strategy."""
     normalized = str(technique or "").strip().lower()
-    if normalized not in MERGE_TECHNIQUES:
+    normalized = MERGE_STRATEGY_ALIASES.get(normalized, normalized)
+    if normalized not in MERGE_STRATEGIES:
         raise ValueError(
             f"Unknown Astrea merge technique '{technique}'. "
-            f"Choose from: {', '.join(sorted(MERGE_TECHNIQUES))}."
+            f"Choose from: {', '.join(sorted(MERGE_STRATEGIES))}."
         )
     merger = (
         _GeneratedFirstMerger(astrea, generated)
-        if normalized == "priority-llm"
+        if normalized == "generated-priority"
         else _RestrictiveMerger(astrea, generated)
     )
     output, details = merger.result()
-    return output, {"technique": normalized, "triples": len(output), **details}
+    return output, {"merge_strategy": normalized, "triples": len(output), **details}
 
 
 def merge_shape_documents(

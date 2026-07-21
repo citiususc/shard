@@ -1,4 +1,4 @@
-# Business Rules
+# Data Constraints
 
 - Ontology: ontology.ttl
 - Author: SHARD example fixture
@@ -12,7 +12,7 @@
 - Number: BR-001
 - Title: Asset identifier
 
-### Business rule
+### Data constraint
 
 Every Asset must have exactly one asset identifier. The identifier must be a non-empty string.
 
@@ -23,7 +23,7 @@ Every Asset must have exactly one asset identifier. The identifier must be a non
 - Number: BR-002
 - Title: Asset lifecycle status
 
-### Business rule
+### Data constraint
 
 Every Asset must have exactly one lifecycle status. The lifecycle status must reference a LifecycleStatus value.
 
@@ -34,7 +34,7 @@ Every Asset must have exactly one lifecycle status. The lifecycle status must re
 - Number: BR-003
 - Title: Asset location
 
-### Business rule
+### Data constraint
 
 Every Asset must be located in exactly one Site.
 
@@ -45,7 +45,7 @@ Every Asset must be located in exactly one Site.
 - Number: BR-004
 - Title: Machine sensor coverage
 
-### Business rule
+### Data constraint
 
 Every Machine must have at least one Sensor attached to it.
 
@@ -56,7 +56,7 @@ Every Machine must have at least one Sensor attached to it.
 - Number: BR-005
 - Title: Sensor measurements
 
-### Business rule
+### Data constraint
 
 Every Sensor must produce at least one Measurement. Each Measurement must have exactly one numeric measurement value and exactly one unit code.
 
@@ -67,7 +67,7 @@ Every Sensor must produce at least one Measurement. Each Measurement must have e
 - Number: BR-006
 - Title: Maintenance task asset and due date
 
-### Business rule
+### Data constraint
 
 Every MaintenanceTask must be linked to exactly one Asset and must have exactly one due date.
 
@@ -78,7 +78,7 @@ Every MaintenanceTask must be linked to exactly one Asset and must have exactly 
 - Number: BR-007
 - Title: Maintenance task priority and assignment
 
-### Business rule
+### Data constraint
 
 Every MaintenanceTask must have exactly one priority level and must be assigned to exactly one Operator.
 
@@ -89,7 +89,7 @@ Every MaintenanceTask must have exactly one priority level and must be assigned 
 - Number: BR-008
 - Title: Inspection target and date
 
-### Business rule
+### Data constraint
 
 Every Inspection must identify exactly one inspected Asset and exactly one inspection date.
 
@@ -100,7 +100,7 @@ Every Inspection must identify exactly one inspected Asset and exactly one inspe
 - Number: BR-009
 - Title: Work order composition
 
-### Business rule
+### Data constraint
 
 Every WorkOrder must contain at least one MaintenanceTask and must have exactly one responsible Department.
 
@@ -111,7 +111,7 @@ Every WorkOrder must contain at least one MaintenanceTask and must have exactly 
 - Number: BR-010
 - Title: Critical asset risk controls
 
-### Business rule
+### Data constraint
 
 Every CriticalAsset must have exactly one risk level and at least one required Certification.
 
@@ -122,7 +122,7 @@ Every CriticalAsset must have exactly one risk level and at least one required C
 - Number: BR-011
 - Title: Factory code traceability
 
-### Business rule
+### Data constraint
 
 Each registered item must store the unique factory code stamped on the equipment.
 
@@ -133,7 +133,7 @@ Each registered item must store the unique factory code stamped on the equipment
 - Number: BR-012
 - Title: Intervention deadline
 
-### Business rule
+### Data constraint
 
 Every planned job must include the calendar deadline by which the intervention has to be finished.
 
@@ -144,6 +144,6 @@ Every planned job must include the calendar deadline by which the intervention h
 - Number: BR-013
 - Title: Field review record
 
-### Business rule
+### Data constraint
 
 Each field review must state when it took place and the equipment that was reviewed.

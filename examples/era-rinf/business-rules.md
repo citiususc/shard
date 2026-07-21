@@ -1,4 +1,4 @@
-# Business Rules
+# Data Constraints
 
 - Ontology: ontology-subset.ttl
 - Author: SHARD example fixture
@@ -12,7 +12,7 @@
 - Number: RINF-001
 - Title: Speed value for track operation
 
-### Business rule
+### Data constraint
 
 For each track declared in the register, the infrastructure manager shall indicate the value used as the upper operating speed, expressed in kilometres per hour.
 
@@ -23,7 +23,7 @@ For each track declared in the register, the infrastructure manager shall indica
 - Number: RINF-002
 - Title: Electrification supply arrangement
 
-### Business rule
+### Data constraint
 
 The register shall identify which traction energy supply arrangement is installed on the track so that vehicles can be checked against compatible electrical equipment.
 
@@ -34,7 +34,7 @@ The register shall identify which traction energy supply arrangement is installe
 - Number: RINF-003
 - Title: Proving train presence
 
-### Business rule
+### Data constraint
 
 For each track, the register shall state which technical arrangement is used to prove whether a train occupies the section and to release it safely.
 
@@ -45,7 +45,7 @@ For each track, the register shall state which technical arrangement is used to 
 - Number: RINF-004
 - Title: Passenger stopping length
 
-### Business rule
+### Data constraint
 
 For a passenger stopping location, the usable distance available along the platform edge shall be recorded in metres.
 
@@ -56,7 +56,7 @@ For a passenger stopping location, the usable distance available along the platf
 - Number: RINF-005
 - Title: Border location classification
 
-### Business rule
+### Data constraint
 
 For every operational point, the data shall indicate whether the location is a station, junction, border point or another technical point.
 
@@ -67,6 +67,6 @@ For every operational point, the data shall indicate whether the location is a s
 - Number: RINF-006
 - Title: Radio communication profile
 
-### Business rule
+### Data constraint
 
 Where railway radio communication is available on a track, the dataset shall provide the applicable version or technical profile of the installation.

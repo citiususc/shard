@@ -1,19 +1,23 @@
-/* Workflow 2: stream SHACL shapes from a structured business-rule batch. */
+/* Workflow 2: stream SHACL shapes from a structured data-constraint batch. */
 
-let guideFile = null;       // {filename, content, format, ruleCount}
+let batchFile = null;       // {filename, content, format, ruleCount}
 let queue = [];             // [{index, ruleNumber, property, status, shape, error, attempts, businessRule, acceptedId}]
 let activeIndex = null;     // currently reviewed queue item index
 let nodeShapes = "";        // aggregated sh:NodeShape block from the "done" event
 let generationController = null;
 let generationRunning = false;
 let generationCancelled = false;
-let guideGenerationLogId = null;
-let guideRequestId = "";
+let batchGenerationLogId = null;
+let batchRequestId = "";
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadDeploymentCapabilities();
   wireReset("reset-demo");
-  wireSessionControls();
+  wireSessionControls({
+    workflow: "batch",
+    getWorkspaceState: batchWorkspaceState,
+    applyWorkspaceState: applyBatchWorkspaceState,
+  });
   wireModelControls();
   wireShapeValidationProfileControls();
   wireAstreaBaselineControls();
@@ -21,10 +25,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   attachTurtleHighlighter("prefixes-editor", "prefixes-editor-hl");
   wireOntologyControls(() => { void refreshAstreaBaselineForOntology(); });
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
+  wireAcceptedShapesControls(
+    byId("accepted-list"),
+    byId("coverage-tag"),
+    byId("remove-all-accepted-shapes"),
+  );
   wireExport("export-shapes", () => nodeShapes);
 
-  byId("guide-file").addEventListener("change", onGuideSelected);
-  byId("generate-guide").addEventListener("click", generateAll);
+  byId("batch-file").addEventListener("change", onBatchSelected);
+  byId("generate-batch").addEventListener("click", generateAll);
   byId("cancel-generation").addEventListener("click", cancelGeneration);
   byId("accept-all-shapes").addEventListener("click", acceptAllGenerated);
   window.addEventListener("accepted-shapes-changed", syncQueueAcceptedState);
@@ -36,30 +45,60 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 });
 
-/* ---------- guide upload ---------- */
-async function onGuideSelected(ev) {
+/* ---------- batch upload ---------- */
+async function onBatchSelected(ev) {
   const file = ev.target.files[0];
   if (!file) return;
   const content = await file.text();
   try {
-    const parsed = validateBusinessRulesTemplate(file.name, content);
-    guideFile = {
-      filename: file.name,
-      content,
-      format: parsed.format,
-      ruleCount: parsed.ruleCount,
-    };
-    byId("guide-summary").textContent =
-      `${file.name} loaded · valid ${parsed.format.toUpperCase()} business-rule batch · ${parsed.ruleCount} rule(s).`;
-    byId("generate-guide").disabled = false;
-    setStatus("Business-rule batch loaded");
+    loadBatchDocument(file.name, content);
+    setStatus("Data-constraint batch loaded");
   } catch (e) {
-    guideFile = null;
-    byId("guide-summary").textContent = `Invalid batch: ${e.message}`;
-    byId("generate-guide").disabled = true;
-    setStatus("Invalid business-rule batch");
+    batchFile = null;
+    byId("batch-summary").textContent = `Invalid batch: ${e.message}`;
+    byId("generate-batch").disabled = true;
+    setStatus("Invalid data-constraint batch");
   } finally {
     ev.target.value = "";
+  }
+}
+
+function loadBatchDocument(filename, content) {
+  const parsed = validateBusinessRulesTemplate(filename, content);
+  batchFile = {
+    filename,
+    content,
+    format: parsed.format,
+    ruleCount: parsed.ruleCount,
+  };
+  byId("batch-summary").textContent =
+    `${filename} loaded · valid ${parsed.format.toUpperCase()} data-constraint batch · ${parsed.ruleCount} constraint(s).`;
+  byId("generate-batch").disabled = false;
+  return batchFile;
+}
+
+function batchWorkspaceState() {
+  return {
+    workflow: "batch",
+    domainContext: byId("domain-context").value,
+    generationGuidance: byId("generation-guidance").value,
+    batch: batchFile ? { ...batchFile } : null,
+  };
+}
+
+function applyBatchWorkspaceState(workspace) {
+  byId("domain-context").value = String(workspace.domainContext || "");
+  byId("generation-guidance").value = String(workspace.generationGuidance || "");
+  if (!workspace.batch || !workspace.batch.content) return;
+  try {
+    loadBatchDocument(
+      workspace.batch.filename || "data_constraints.md",
+      String(workspace.batch.content),
+    );
+  } catch (error) {
+    batchFile = null;
+    byId("batch-summary").textContent = `Invalid imported batch: ${error.message}`;
+    byId("generate-batch").disabled = true;
   }
 }
 
@@ -71,7 +110,7 @@ function validateBusinessRulesTemplate(filename, content) {
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
     return validateBusinessRulesMarkdown(content);
   }
-  throw new Error("Use the provided business-rule batch format in .html or .md.");
+  throw new Error("Use the provided data-constraint batch format in .html or .md.");
 }
 
 function validateBusinessRulesHtml(content) {
@@ -80,12 +119,13 @@ function validateBusinessRulesHtml(content) {
   if (!sections.length) throw new Error("The HTML batch must contain at least one section.rule.");
   let ruleCount = 0;
   for (const section of sections) {
-    if (!section.querySelector(".number") || !section.querySelector(".title") || !section.querySelector(".business-rule")) {
-      throw new Error("Each HTML rule must contain .number, .title and .business-rule.");
+    const constraint = section.querySelector(".data-constraint, .business-rule");
+    if (!section.querySelector(".number") || !section.querySelector(".title") || !constraint) {
+      throw new Error("Each HTML entry must contain a number, title and data constraint.");
     }
-    if (section.querySelector(".business-rule").textContent.trim()) ruleCount += 1;
+    if (constraint.textContent.trim()) ruleCount += 1;
   }
-  if (!ruleCount) throw new Error("The batch is valid, but all business rule fields are empty.");
+  if (!ruleCount) throw new Error("The batch is valid, but all data-constraint fields are empty.");
   return { format: "html", ruleCount };
 }
 
@@ -98,14 +138,15 @@ function validateBusinessRulesMarkdown(content) {
     const start = headings[i].index + headings[i][0].length;
     const end = i + 1 < headings.length ? headings[i + 1].index : text.length;
     const block = text.slice(start, end);
-    if (!/^\s*-\s*Number\s*:/im.test(block) || !/^\s*-\s*Title\s*:/im.test(block) || !/^\s*###\s+Business rule\s*$/im.test(block)) {
-      throw new Error("Each Markdown rule must contain “- Number:”, “- Title:” and “### Business rule”.");
+    const constraintHeading = /^\s*###\s+(?:Data constraint|Business rule)\s*$/im;
+    if (!/^\s*-\s*Number\s*:/im.test(block) || !/^\s*-\s*Title\s*:/im.test(block) || !constraintHeading.test(block)) {
+      throw new Error("Each Markdown entry must contain “- Number:”, “- Title:” and “### Data constraint”.");
     }
-    const businessRule = block.split(/^\s*###\s+Business rule\s*$/im)[1] || "";
-    const clean = businessRule.split(/^\s*---\s*$/m)[0].trim();
+    const dataConstraint = block.split(constraintHeading)[1] || "";
+    const clean = dataConstraint.split(/^\s*---\s*$/m)[0].trim();
     if (clean) ruleCount += 1;
   }
-  if (!ruleCount) throw new Error("The batch is valid, but all business rule fields are empty.");
+  if (!ruleCount) throw new Error("The batch is valid, but all data-constraint fields are empty.");
   return { format: "markdown", ruleCount };
 }
 
@@ -113,17 +154,17 @@ function validateBusinessRulesMarkdown(content) {
 async function generateAll() {
   const o = getOntology();
   if (!o) { setStatus("Load an ontology first"); return; }
-  if (!guideFile) { setStatus("Upload a valid business-rule batch first"); return; }
+  if (!batchFile) { setStatus("Upload a valid data-constraint batch first"); return; }
 
   const m = getModels();
   const panel = byId("validation-panel");
-  guideRequestId = makeRequestId();
-  guideGenerationLogId = beginExecutionRun({
-    source: "Batch to Rules",
-    metadata: guideExecutionMetadata(o, m, guideFile.filename, guideRequestId),
+  batchRequestId = makeRequestId();
+  batchGenerationLogId = beginExecutionRun({
+    source: "Batch to Shapes",
+    metadata: batchExecutionMetadata(o, m, batchFile.filename, batchRequestId),
   });
-  byId("generate-guide").disabled = true;
-  appendExecutionEntry(guideGenerationLogId, {
+  byId("generate-batch").disabled = true;
+  appendExecutionEntry(batchGenerationLogId, {
     level: "info", stage: "configuration", message: "Batch generation requested",
   });
 
@@ -144,36 +185,36 @@ async function generateAll() {
     };
   }
   if (!modelCheck.ok) {
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "error", stage: "configuration", message: "Model configuration check failed",
       details: modelCheck.message,
     });
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "error", kind: "summary", stage: "summary",
       message: "Failed before generation · model configuration unavailable",
     });
-    finishExecutionRun(guideGenerationLogId, "failed");
+    finishExecutionRun(batchGenerationLogId, "failed");
     if (panel) {
       panel.className = "validation-panel backend error";
       panel.textContent = `Generation blocked by model/backend configuration:\n${modelCheck.message}`;
     }
     setProgress(null, null, modelCheck.message);
     setStatus("Model configuration error");
-    byId("generate-guide").disabled = false;
+    byId("generate-batch").disabled = false;
     setGenerationControls(false);
     return;
   }
-  appendExecutionEntry(guideGenerationLogId, {
+  appendExecutionEntry(batchGenerationLogId, {
     level: "pass", stage: "configuration", message: "Generation and embedding models are available",
   });
 
   const requestedAstreaMode = getAstreaUseMode();
   if (requestedAstreaMode !== "none") {
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "info", stage: "astrea", message: `Preparing Astrea · ${requestedAstreaMode}`,
     });
     const baseline = await ensureAstreaBaseline();
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: baseline ? "pass" : "warn", stage: "astrea",
       message: baseline
         ? `Astrea baseline ready · ${baseline.shapeCount} shape(s)`
@@ -188,43 +229,50 @@ async function generateAll() {
   refreshHighlight("shape-editor");
   byId("editor-title").textContent = "Editable shape";
   setProgress(0, 0, "Starting…");
-  setStatus("Preprocessing business rules…");
+  setStatus("Preprocessing data constraints…");
   generationController = new AbortController();
   setGenerationControls(true);
 
   const payload = {
-    ontology_content: o.content, base_namespace: o.baseNamespace,
-    shape_namespace: o.shapeNamespace, shape_prefix: o.shapePrefix, prefixes: o.prefixes,
-    guide_content: guideFile.content, guide_filename: guideFile.filename, guide_format: guideFile.format,
-    domain_context: byId("domain-context").value.trim(),
-    generation_guidance: byId("generation-guidance").value.trim(),
-    validation_profiles: getShapeValidationProfiles(),
-    astrea_use_mode: getAstreaUseMode(),
-    astrea_merge_technique: getAstreaMergeTechnique(),
-    astrea_baseline: astreaEvidencePayload(),
-    llm_model: m.llmModel,
-    embedding_model: m.embeddingModel, temperature: m.temperature, provider: m.provider,
-    inference_config: getInferenceConfig(),
+    ontology: apiOntologyInput(o),
+    batch: {
+      filename: batchFile.filename,
+      content: batchFile.content,
+      format: batchFile.format,
+    },
+    inference: apiInferenceOptions(m),
+    generation: {
+      base_namespace: o.baseNamespace,
+      shape_namespace: o.shapeNamespace,
+      shape_prefix: o.shapePrefix,
+      prefixes: o.prefixes,
+      domain_context: byId("domain-context").value.trim(),
+      generation_guidance: byId("generation-guidance").value.trim(),
+      llm_review: true,
+      review_max_attempts: 3,
+    },
+    validation: apiValidationOptions(),
+    astrea: apiAstreaOptions(),
   };
 
   try {
-    const res = await fetchStream(SERVICES.guide, {
+    const res = await fetchStream(SERVICES.batch, {
       method: "POST",
       body: JSON.stringify(payload),
     }, {
       label: "Generate batch shapes",
       timeoutMs: 30000,
       controller: generationController,
-      requestId: guideRequestId,
+      requestId: batchRequestId,
     });
     await consumeStream(res.body);
   } catch (e) {
     if (generationCancelled || e.cancelled) {
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "warn", kind: "summary", stage: "summary",
         message: `Cancelled · ${queue.filter((item) => item.status === "valid").length} valid result(s) received before cancellation`,
       });
-      finishExecutionRun(guideGenerationLogId, "cancelled");
+      finishExecutionRun(batchGenerationLogId, "cancelled");
       setProgress(null, null, "Generation cancelled.");
       if (panel) {
         panel.className = "validation-panel";
@@ -232,17 +280,17 @@ async function generateAll() {
       }
       setStatus("Generation cancelled");
     } else {
-      updateExecutionRun(guideGenerationLogId, {
-        metadata: { requestId: e.requestId || guideRequestId },
+      updateExecutionRun(batchGenerationLogId, {
+        metadata: { requestId: e.requestId || batchRequestId },
       });
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "error", stage: "service", message: "Batch generation request failed", details: e.message,
       });
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "error", kind: "summary", stage: "summary",
         message: "Failed · batch generation did not complete",
       });
-      finishExecutionRun(guideGenerationLogId, "failed");
+      finishExecutionRun(batchGenerationLogId, "failed");
       setProgress(0, 0, `Error: ${e.message}`);
       if (panel) {
         panel.className = "validation-panel backend error";
@@ -251,7 +299,7 @@ async function generateAll() {
       setStatus("Generation failed");
     }
   } finally {
-    byId("generate-guide").disabled = false;
+    byId("generate-batch").disabled = false;
     setGenerationControls(false);
   }
 }
@@ -269,7 +317,7 @@ function setGenerationControls(running) {
 function cancelGeneration() {
   if (!generationRunning || generationCancelled) return;
   generationCancelled = true;
-  appendExecutionEntry(guideGenerationLogId, {
+  appendExecutionEntry(batchGenerationLogId, {
     level: "warn", stage: "cancel", message: "Generation cancellation requested by the user",
   });
   if (generationController) generationController.abort();
@@ -295,18 +343,44 @@ async function consumeStream(body) {
       buffer = buffer.slice(sep + 2);
       const line = chunk.split("\n").find((l) => l.startsWith("data: "));
       if (!line) continue;
-      try { handleEvent(JSON.parse(line.slice(6))); } catch { /* ignore */ }
+      try { handleEvent(normalizeBatchStreamEvent(JSON.parse(line.slice(6)))); } catch { /* ignore */ }
     }
     if (generationCancelled) break;
   }
 }
 
+function normalizeBatchStreamEvent(event) {
+  if (!event || !event.event) return event;
+  if (event.event === "heartbeat") return { type: "heartbeat", ...event };
+  const extensions = event.extensions || {};
+  const type = extensions.source_type || {
+    started: "start",
+    progress: "status",
+    rule_resolved: "status",
+    shape_generated: "shape",
+    validation_completed: "status",
+    warning: "status",
+    completed: "done",
+    failed: "error",
+  }[event.event] || "status";
+  return {
+    ...extensions,
+    ...event,
+    type,
+    stage: extensions.stage || (event.event === "rule_resolved" ? "resolution" : undefined),
+    target: event.target && event.target.iri ? event.target.iri : event.target,
+    targets: (event.targets || []).map((item) => item.iri || item),
+    error: event.error && event.error.message ? event.error.message : extensions.error,
+  };
+}
+
 function handleEvent(ev) {
-  logGuideEvent(ev);
+  if (ev.type === "heartbeat") return;
+  logBatchEvent(ev);
   if (ev.type === "status") {
     handleStatusEvent(ev);
   } else if (ev.type === "start") {
-    setProgress(0, ev.total, `Generating shapes from ${ev.total} business rule(s)…`, "business rules processed");
+    setProgress(0, ev.total, `Generating shapes from ${ev.total} data constraint(s)…`, "data constraints processed");
     if (ev.prefixes) {  // sync the (server-built) prefixes into the editable panel
       const o = getOntology();
       if (o) {
@@ -325,14 +399,14 @@ function handleEvent(ev) {
   } else if (ev.type === "shape") {
     const item = queueItemFromEvent(ev);
     queue.push(item);
-    setProgress(ev.index, ev.total, shapeProgressMessage(item), "business rules processed");
+    setProgress(ev.index, ev.total, shapeProgressMessage(item), "data constraints processed");
     renderQueue();
     if (activeIndex === null || (queue[activeIndex] && queue[activeIndex].status === "skipped" && item.status !== "skipped")) {
       selectQueueItem(queue.length - 1);
     }
   } else if (ev.type === "done") {
     nodeShapes = ev.shape_document || ev.node_shapes || "";
-    setProgress(ev.total, ev.total, `Done — ${ev.valid} valid, ${ev.invalid} discarded, ${ev.skipped} unresolved.`, "business rules processed");
+    setProgress(ev.total, ev.total, `Done — ${ev.valid} valid, ${ev.invalid} discarded, ${ev.skipped} unresolved.`, "data constraints processed");
     setStatus("Generation complete");
   } else if (ev.type === "error") {
     setProgress(null, null, `Error: ${ev.message}`);
@@ -345,56 +419,57 @@ function handleEvent(ev) {
   }
 }
 
-function logGuideEvent(ev) {
+function logBatchEvent(ev) {
   if (!ev || !ev.type) return;
-  if (ev.request_id && ev.request_id !== guideRequestId) {
-    guideRequestId = ev.request_id;
-    updateExecutionRun(guideGenerationLogId, { metadata: { requestId: guideRequestId } });
+  if (ev.request_id && ev.request_id !== batchRequestId) {
+    batchRequestId = ev.request_id;
+    updateExecutionRun(batchGenerationLogId, { metadata: { requestId: batchRequestId } });
   }
   if (ev.type === "status") {
     const stage = ev.stage || "pipeline";
     if (stage === "rule") {
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "info", kind: "rule", stage,
-        message: `${ruleLabel(ev)} · ${ev.title || "Untitled business rule"}`,
+        message: `${ruleLabel(ev)} · ${ev.title || "Untitled data constraint"}`,
       });
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "info", stage, indent: 1, message: "Resolving ontology terms and roles",
       });
       return;
     }
     if (stage === "resolution") {
       const targets = formatRoleContext(ev);
-      const confidence = ev.confidence != null && Number.isFinite(Number(ev.confidence))
-        ? ` · confidence ${Number(ev.confidence).toFixed(2)}` : "";
+      const rawScore = ev.resolution_score ?? ev.confidence;
+      const score = rawScore != null && Number.isFinite(Number(rawScore))
+        ? ` · ${(ev.score_kind || "strategy").replaceAll("_", " ")} score ${Number(rawScore).toFixed(2)}` : "";
       const unresolved = ev.resolved_by === "none" || !targets;
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: unresolved ? "warn" : "info", stage, indent: 1,
         message: unresolved
-          ? `Resolution · none${confidence} · no ontology target`
-          : `Resolution · ${resolvedByText(ev.resolved_by)}${confidence} · ${targets}`,
+          ? `Resolution · none${score} · no ontology target`
+          : `Resolution · ${resolvedByText(ev.resolved_by)}${score} · ${targets}`,
       });
       return;
     }
     if (stage === "generation") {
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "info", stage, indent: 1,
         message: `Generating one rule constraint · ${formatRoleContext(ev) || "resolved ontology context"}`,
       });
       return;
     }
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "info", stage, message: ev.message || stage,
     });
     return;
   }
   if (ev.type === "start") {
-    updateExecutionRun(guideGenerationLogId, {
-      metadata: { ruleCount: ev.total || 0, requestId: ev.request_id || guideRequestId },
+    updateExecutionRun(batchGenerationLogId, {
+      metadata: { ruleCount: ev.total || 0, requestId: ev.request_id || batchRequestId },
     });
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "info", stage: "start",
-      message: `Starting generation for ${ev.total || 0} business rule(s)`,
+      message: `Starting generation for ${ev.total || 0} data constraint(s)`,
     });
     return;
   }
@@ -402,28 +477,35 @@ function logGuideEvent(ev) {
     const label = ruleLabel(ev);
     const target = formatRoleContext(ev) || ev.target || ev.property || "unresolved ontology context";
     if (ev.status === "valid") {
-      appendExecutionEntry(guideGenerationLogId, {
+      if (ev.llm_review_applied) {
+        appendExecutionEntry(batchGenerationLogId, {
+          level: "pass", stage: "review", indent: 1,
+          message: `${target} · ${semanticReviewSummary(ev)}`,
+          details: semanticReviewDetails(ev),
+        });
+      }
+      appendExecutionEntry(batchGenerationLogId, {
         level: "pass", stage: "syntax", indent: 1, message: `${target} · Turtle syntax valid`,
       });
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "pass", stage: "grounding", indent: 1, message: `${target} · ontology grounding passed`,
       });
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "pass", stage: "validation", indent: 1,
         message: `${target} · SHACL for SHACL passed · ${validationScopeLabel(ev)}`,
       });
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "done", stage: "result", indent: 1,
         message: `${target} · shape generated in ${ev.attempts || 1} attempt(s)`,
       });
     } else if (ev.status === "skipped") {
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "warn", stage: "result", indent: 1,
         message: `${label} · ${target} · skipped (${ev.resolved_by === "none" ? "unresolved rule" : "missing ontology target"})`,
         details: ev.error,
       });
     } else {
-      appendExecutionEntry(guideGenerationLogId, {
+      appendExecutionEntry(batchGenerationLogId, {
         level: "error", stage: ev.error_type || "generation", indent: 1,
         message: `${target} · discarded (${errorTypeText(ev.error_type)}) after ${ev.attempts || 0} attempt(s)`,
         details: ev.error,
@@ -432,14 +514,14 @@ function logGuideEvent(ev) {
     return;
   }
   if (ev.type === "done") {
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "pass", stage: "consolidation", message: "Generated shapes consolidated by NodeShape / target class",
     });
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "done", kind: "summary", stage: "summary",
       message: `Completed · ${ev.total || 0} rules · ${ev.valid || 0} valid · ${ev.invalid || 0} discarded · ${ev.skipped || 0} unresolved`,
     });
-    finishExecutionRun(guideGenerationLogId, "completed", {
+    finishExecutionRun(batchGenerationLogId, "completed", {
       rules: ev.total || 0,
       valid: ev.valid || 0,
       invalid: ev.invalid || 0,
@@ -448,14 +530,14 @@ function logGuideEvent(ev) {
     return;
   }
   if (ev.type === "error") {
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "error", stage: "service", message: "Batch generation failed", details: ev.message,
     });
-    appendExecutionEntry(guideGenerationLogId, {
+    appendExecutionEntry(batchGenerationLogId, {
       level: "error", kind: "summary", stage: "summary",
       message: "Failed · batch generation did not complete",
     });
-    finishExecutionRun(guideGenerationLogId, "failed");
+    finishExecutionRun(batchGenerationLogId, "failed");
   }
 }
 
@@ -463,7 +545,7 @@ function handleStatusEvent(ev) {
   const stage = ev.stage || "";
   if (stage === "rule") {
     const label = ruleLabel(ev);
-    setProgress(ev.current, ev.total, `${label}: resolving ontology terms and roles…`, "business rules processed");
+    setProgress(ev.current, ev.total, `${label}: resolving ontology terms and roles…`, "data constraints processed");
     setStatus(`Resolving ${label}`);
     return;
   }
@@ -474,14 +556,14 @@ function handleStatusEvent(ev) {
     const message = ev.resolved_by === "none" || !targets
       ? `${label}: no ontology target resolved.`
       : `${label}: resolved via ${signal}: ${targets}`;
-    setProgress(ev.current, ev.total, message, "business rules processed");
+    setProgress(ev.current, ev.total, message, "data constraints processed");
     setStatus(`${label}: ${ev.resolved_by || "resolution"}`);
     return;
   }
   if (stage === "generation") {
     const label = ruleLabel(ev);
     const context = formatRoleContext(ev) || "resolved ontology context";
-    setProgress(ev.current, ev.total, `${label}: generating one constraint from ${context}`, "business rules processed");
+    setProgress(ev.current, ev.total, `${label}: generating one constraint from ${context}`, "data constraints processed");
     setStatus(`Generating ${label}`);
     return;
   }
@@ -492,9 +574,14 @@ function handleStatusEvent(ev) {
   setStatus(ev.message);
 }
 
-function setProgress(current, total, message, unit = "business rules processed") {
+function setProgress(current, total, message, unit = "data constraints processed") {
   if (current !== null && total !== null) {
-    byId("progress-tag").textContent = `${current} / ${total} ${unit}`;
+    const progressTag = byId("progress-tag");
+    const fullLabel = `${current} / ${total} ${unit}`;
+    const compactUnit = unit === "data constraints processed" ? "processed" : unit;
+    progressTag.textContent = `${current} / ${total} ${compactUnit}`;
+    progressTag.title = fullLabel;
+    progressTag.setAttribute("aria-label", fullLabel);
     const pct = total ? Math.round((current / total) * 100) : 0;
     byId("progress-bar").style.width = pct + "%";
   }
@@ -571,6 +658,9 @@ function queueItemFromEvent(ev) {
     error: ev.error,
     errorType: ev.error_type || "",
     attempts: ev.attempts || 0,
+    llmReviewApplied: Boolean(ev.llm_review_applied),
+    reviewAttempts: ev.review_attempts || 0,
+    semanticReview: ev.semantic_review || {},
     syntaxValid: ev.syntax_valid,
     profileValid: ev.profile_valid,
     profileCount: ev.profile_count,
@@ -609,11 +699,11 @@ function validationShortLabel(item) {
   return domainCount ? "generic + profile" : "generic";
 }
 
-function guideExecutionMetadata(ontology, models, artifact, requestId = "") {
+function batchExecutionMetadata(ontology, models, artifact, requestId = "") {
   return {
     artifact,
     ontology: ontology && ontology.filename,
-    ruleCount: guideFile && guideFile.ruleCount,
+    ruleCount: batchFile && batchFile.ruleCount,
     provider: models && models.provider,
     models: models ? [models.llmModel, models.embeddingModel] : [],
     validation: activeValidationScopeLabel(),
@@ -624,10 +714,10 @@ function guideExecutionMetadata(ontology, models, artifact, requestId = "") {
   };
 }
 
-function beginGuideReviewRun(action, item = null) {
+function beginBatchReviewRun(action, item = null) {
   return beginExecutionRun({
-    source: "Batch to Rules",
-    metadata: guideExecutionMetadata(
+    source: "Batch to Shapes",
+    metadata: batchExecutionMetadata(
       getOntology(),
       getModels(),
       item && item.displayName ? `${action} · ${item.displayName}` : action,
@@ -640,7 +730,6 @@ function renderQueue() {
   const list = byId("queue-list");
   reconcileQueueAcceptedState();
   updateAcceptAllButton();
-  byId("queue-count").textContent = `${queue.length} result${queue.length === 1 ? "" : "s"}`;
   list.innerHTML = "";
   queue.forEach((item, i) => {
     const card = document.createElement("div");
@@ -659,7 +748,8 @@ function renderQueue() {
     const reason = item.status === "invalid"
       ? errorTypeText(item.errorType)
       : item.unresolved ? "unresolved" : signal;
-    const meta = [roleContext, signal, validationShortLabel(item), reason !== signal ? reason : ""].filter(Boolean).join(" · ");
+    const review = item.llmReviewApplied ? semanticReviewSummary(item) : "";
+    const meta = [roleContext, signal, review, validationShortLabel(item), reason !== signal ? reason : ""].filter(Boolean).join(" · ");
     card.innerHTML =
       `<strong>${esc(short)}</strong>` +
       `<div class="qmeta"><span class="qbadge ${badge}">${badge}</span>` +
@@ -711,7 +801,7 @@ function selectQueueItem(i) {
     panel.textContent = `Shape discarded for ${item.displayName}.\nReason: ${errorTypeText(item.errorType)} after ${item.attempts} attempt(s).\n\n${item.error || ""}`;
   } else if (item.unresolved) {
     panel.className = "validation-panel";
-    panel.textContent = `Business rule not resolved to an ontology target.\nResolver signal: ${item.resolvedBy || "none"}.\nReview the rule or ontology labels before generating manually.`;
+    panel.textContent = `Data constraint not resolved to an ontology target.\nResolver signal: ${item.resolvedBy || "none"}.\nReview the constraint or ontology labels before generating manually.`;
   } else {
     panel.className = "validation-panel";
     panel.textContent = `No generated shape for ${item.displayName}.`;
@@ -736,7 +826,7 @@ function renderCurrentBusinessRule(item) {
     item.constraintPaths && item.constraintPaths.length ? `Constrained properties: ${item.constraintPaths.join(", ")}` : "",
     item.relatedTerms && item.relatedTerms.length ? `Related terms: ${item.relatedTerms.join(", ")}` : "",
   ].filter(Boolean).join("\n");
-  const body = item.businessRule || "No specific business rule context was returned for this generated shape.";
+  const body = item.businessRule || "No specific data-constraint context was returned for this generated shape.";
   box.value = header ? `${header}\n\n${body}` : body;
   tag.textContent = item.ruleNumber || `#${item.index}`;
 }
@@ -747,7 +837,7 @@ async function checkShape() {
   const shape = byId("shape-editor").value.trim();
   if (!shape) return;
   const item = activeIndex === null ? null : queue[activeIndex];
-  const logId = beginGuideReviewRun("Manual shape check", item);
+  const logId = beginBatchReviewRun("Manual shape check", item);
   appendExecutionEntry(logId, {
     level: "info", stage: "validation", message: `Checking edited shape · ${activeValidationScopeLabel()}`,
   });
@@ -786,7 +876,7 @@ async function acceptCurrent() {
   const item = queue[activeIndex];
   const shape = byId("shape-editor").value.trim();
   if (!shape) { setStatus("Nothing to accept"); return; }
-  const logId = beginGuideReviewRun("Accept shape", item);
+  const logId = beginBatchReviewRun("Accept shape", item);
   appendExecutionEntry(logId, {
     level: "info", stage: "validation", message: `Revalidating before acceptance · ${activeValidationScopeLabel()}`,
   });
@@ -835,7 +925,7 @@ async function acceptAllGenerated() {
   let failedCount = 0;
   let firstFailedIndex = null;
   const o = getOntology();
-  const logId = beginGuideReviewRun(`Accept all · ${validItems.length} candidate shape(s)`);
+  const logId = beginBatchReviewRun(`Accept all · ${validItems.length} candidate shape(s)`);
   appendExecutionEntry(logId, {
     level: "info", stage: "validation", message: `Revalidating ${validItems.length} shape(s) · ${activeValidationScopeLabel()}`,
   });

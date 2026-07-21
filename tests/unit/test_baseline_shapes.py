@@ -5,6 +5,7 @@ import sys
 import unittest
 
 from rdflib import Graph, Literal, URIRef
+from rdflib.collection import Collection
 from rdflib.namespace import RDF, SH
 
 
@@ -203,7 +204,103 @@ gen:AssetShape a sh:NodeShape ;
                 self.assertTrue(result["syntax_valid"])
                 self.assertTrue(result["generic_profile_active"])
                 self.assertEqual(result["validation_level"], "syntax+generic")
-                self.assertEqual(result["technique"], technique)
+                expected = "generated-priority" if technique == "priority-llm" else technique
+                self.assertEqual(result["merge_strategy"], expected)
+
+    def test_restrictive_combines_bounds_enumerations_and_type_constraints(self):
+        astrea = PREFIXES + """
+ast:CodeShape a sh:PropertyShape ;
+    sh:path ex:code ; sh:minCount 1 ; sh:maxCount 5 ;
+    sh:minInclusive 0 ; sh:maxInclusive 100 ;
+    sh:datatype xsd:string ; sh:class ex:LegacyCode ;
+    sh:in ("A" "B") ; sh:message "Astrea message" .
+"""
+        generated = PREFIXES + """
+gen:CodeShape a sh:PropertyShape ;
+    sh:path ex:code ; sh:minCount 2 ; sh:maxCount 3 ;
+    sh:minInclusive 10 ; sh:maxInclusive 90 ;
+    sh:datatype xsd:integer ; sh:class ex:CurrentCode ;
+    sh:in ("B" "C") ; sh:message "Generated message" .
+"""
+        merged = merge_shape_documents(astrea, generated, "restrictive")
+        graph = Graph().parse(data=merged["shape_document"], format="turtle")
+        shape = next(graph.subjects(SH.path, URIRef(f"{EX}code")))
+
+        self.assertEqual(graph.value(shape, SH.minCount), Literal(2))
+        self.assertEqual(graph.value(shape, SH.maxCount), Literal(3))
+        self.assertEqual(graph.value(shape, SH.minInclusive), Literal(10))
+        self.assertEqual(graph.value(shape, SH.maxInclusive), Literal(90))
+        self.assertEqual(graph.value(shape, SH.datatype), URIRef("http://www.w3.org/2001/XMLSchema#integer"))
+        self.assertEqual(graph.value(shape, SH["class"]), URIRef(f"{EX}CurrentCode"))
+        self.assertEqual(graph.value(shape, SH.message), Literal("Generated message"))
+        self.assertEqual(
+            set(Collection(graph, graph.value(shape, SH["in"]))),
+            {Literal("B")},
+        )
+        self.assertTrue(any("conflicting values" in warning for warning in merged["warnings"]))
+
+    def test_restrictive_reports_incompatible_cardinality_and_numeric_bounds(self):
+        astrea = PREFIXES + """
+ast:ValueShape a sh:PropertyShape ;
+    sh:path ex:value ; sh:maxCount 2 ; sh:maxExclusive 5 .
+"""
+        generated = PREFIXES + """
+gen:ValueShape a sh:PropertyShape ;
+    sh:path ex:value ; sh:minCount 4 ; sh:minExclusive 10 .
+"""
+        merged = merge_shape_documents(astrea, generated, "restrictive")
+        warnings = "\n".join(merged["warnings"])
+        self.assertIn("minCount", warnings)
+        self.assertIn("maxCount", warnings)
+        self.assertIn("minExclusive", warnings)
+        self.assertIn("maxExclusive", warnings)
+
+    def test_restrictive_handles_logical_constraints_and_preserves_generated_metadata(self):
+        astrea = PREFIXES + """
+@prefix ast-extra: <http://example.org/astrea/extra/> .
+ast:LogicalShape a sh:PropertyShape ;
+    sh:path ex:choice ;
+    sh:and (ast-extra:A ast-extra:B) ;
+    sh:or (ast-extra:A ast-extra:B) ;
+    sh:not ast-extra:A ;
+    sh:name "Astrea name" ; sh:message "Astrea message" .
+"""
+        generated = PREFIXES + """
+@prefix gen-extra: <http://example.org/generated/extra/> .
+gen:LogicalShape a sh:PropertyShape ;
+    sh:path ex:choice ;
+    sh:and (gen-extra:B gen-extra:C) ;
+    sh:or (gen-extra:B gen-extra:C) ;
+    sh:not gen-extra:C ;
+    sh:name "Generated name" ; sh:message "Generated message" .
+"""
+        merged = merge_shape_documents(astrea, generated, "restrictive")
+        graph = Graph().parse(data=merged["shape_document"], format="turtle")
+        shape = next(graph.subjects(SH.path, URIRef(f"{EX}choice")))
+
+        and_members = set(Collection(graph, graph.value(shape, SH["and"])))
+        self.assertEqual(len(and_members), 4)
+        or_members = set(Collection(graph, graph.value(shape, SH["or"])))
+        self.assertEqual(
+            or_members,
+            {
+                URIRef("http://example.org/generated/extra/B"),
+                URIRef("http://example.org/generated/extra/C"),
+            },
+        )
+        self.assertEqual(
+            graph.value(shape, SH["not"]),
+            URIRef("http://example.org/generated/extra/C"),
+        )
+        self.assertEqual(graph.value(shape, SH.name), Literal("Generated name"))
+        self.assertEqual(graph.value(shape, SH.message), Literal("Generated message"))
+        self.assertGreaterEqual(
+            sum("logical constraints" in warning for warning in merged["warnings"]),
+            2,
+        )
+        namespaces = {prefix: str(namespace) for prefix, namespace in graph.namespaces()}
+        self.assertEqual(namespaces["ast-extra"], "http://example.org/astrea/extra/")
+        self.assertEqual(namespaces["gen-extra"], "http://example.org/generated/extra/")
 
 
 if __name__ == "__main__":

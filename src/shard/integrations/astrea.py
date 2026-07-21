@@ -9,15 +9,26 @@ import httpx
 from rdflib import Graph
 from rdflib.namespace import RDF, SH
 
+from shard.deployment.operational import operational_settings
+
 
 DEFAULT_ASTREA_API_URL = "https://astrea.linkeddata.es/api/shacl/document"
 ASTREA_API_URL_ENV = "SHARD_ASTREA_API_URL"
-ASTREA_TIMEOUT_ENV = "SHARD_ASTREA_TIMEOUT"
-DEFAULT_ASTREA_TIMEOUT = 120.0
+ASTREA_TIMEOUT_ENV = "ASTREA_TIMEOUT_SECONDS"
+LEGACY_ASTREA_TIMEOUT_ENV = "SHARD_ASTREA_TIMEOUT"
+DEFAULT_ASTREA_TIMEOUT = 1800.0
 
 
 class AstreaUnavailableError(RuntimeError):
     """Raised when the configured Astrea service cannot be reached."""
+
+
+class AstreaTimeoutError(AstreaUnavailableError):
+    """Raised when the configured Astrea service exceeds its timeout."""
+
+
+class AstreaRateLimitError(RuntimeError):
+    """Raised when Astrea refuses work because its request limit was reached."""
 
 
 class AstreaResponseError(RuntimeError):
@@ -29,9 +40,13 @@ def _service_url(endpoint: Optional[str]) -> str:
 
 
 def _timeout_seconds(timeout: Optional[float]) -> float:
-    value = timeout if timeout is not None else os.environ.get(ASTREA_TIMEOUT_ENV)
+    value = timeout
+    if value is None:
+        value = os.environ.get(ASTREA_TIMEOUT_ENV) or os.environ.get(
+            LEGACY_ASTREA_TIMEOUT_ENV
+        )
     if value in (None, ""):
-        return DEFAULT_ASTREA_TIMEOUT
+        return operational_settings().astrea_timeout_seconds
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
@@ -78,9 +93,13 @@ def generate_astrea_shapes(
                 ontology_turtle,
                 timeout_seconds,
             )
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+        except httpx.TimeoutException as exc:
+            raise AstreaTimeoutError(
+                "Astrea did not respond before the configured timeout."
+            ) from exc
+        except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             raise AstreaUnavailableError(
-                "Astrea is currently unavailable or did not respond in time."
+                "Astrea is currently unavailable."
             ) from exc
         except httpx.HTTPError as exc:
             raise AstreaUnavailableError(
@@ -90,7 +109,13 @@ def generate_astrea_shapes(
         if owns_client:
             active_client.close()
 
-    if response.status_code in {408, 425, 429} or response.status_code >= 500:
+    if response.status_code in {408, 504}:
+        raise AstreaTimeoutError(
+            f"Astrea did not respond before the timeout (HTTP {response.status_code})."
+        )
+    if response.status_code == 429:
+        raise AstreaRateLimitError("Astrea rate limited the request.")
+    if response.status_code == 425 or response.status_code >= 500:
         raise AstreaUnavailableError(
             f"Astrea is currently unavailable (HTTP {response.status_code})."
         )

@@ -81,7 +81,10 @@ def main():
     request = urllib.request.Request(
         f"{args.api_url.rstrip('/')}/workflows/rule-to-shape",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
         method="POST",
     )
     try:
@@ -94,11 +97,13 @@ def main():
         raise SystemExit(f"Could not reach SHARD at {args.api_url}: {exc.reason}") from exc
 
     args.output.write_text(result.get("final_shape_document", ""), encoding="utf-8")
-    resolution = (result.get("rule") or {}).get("resolution") or {}
+    resolution = result.get("rule") or {}
     print(json.dumps({
         "request_id": result.get("request_id"),
         "resolved_by": resolution.get("resolved_by"),
-        "targets": resolution.get("targets") or [],
+        "resolution_score": resolution.get("resolution_score"),
+        "score_kind": resolution.get("score_kind"),
+        "targets": resolution.get("selected_targets") or [],
         "unresolved": result.get("unresolved"),
         "summary": result.get("summary") or {},
         "output": str(args.output),

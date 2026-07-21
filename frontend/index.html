@@ -25,7 +25,7 @@
       </div>
       <nav class="topnav">
         <a class="navlink flow-label" href="rule.html"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></a>
-        <a class="navlink flow-label" href="guide.html"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Rules</span></a>
+        <a class="navlink flow-label" href="batch.html"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Shapes</span></a>
         <button class="logs-button" id="logs-toggle" type="button">
           <span>Logs</span><span class="logs-count" id="logs-count" hidden>0</span>
         </button>
@@ -37,11 +37,11 @@
       <section class="hero">
         <div class="hero-main">
           <div class="hero-copy">
-            <p class="hero-kicker">An Interactive Ontology-Grounded SHACL Authoring from Business Rules</p>
+            <p class="hero-kicker">An Interactive Workbench for Ontology-Grounded SHACL Authoring from Data Constraints</p>
             <h1 class="hero-title">Turn business knowledge into reviewable SHACL shapes.</h1>
             <p class="lead">
-              Generate SHACL validation shapes from an OWL ontology and its business rules.
-              Work one rule at a time, or process a structured batch of business rules into a queue of
+              Generate SHACL validation shapes from an OWL ontology and its data constraints.
+              Work one constraint at a time, or process a structured batch of data constraints into a queue of
               shapes you can inspect, edit, validate and export.
             </p>
             <div class="hero-actions">
@@ -63,7 +63,7 @@
           <div class="hero-preview" aria-label="SHARD workflow preview">
             <div class="preview-window">
               <div class="preview-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-              <div class="preview-line strong">Business rule</div>
+              <div class="preview-line strong">Data constraint</div>
               <div class="preview-line">Every Track must define exactly one nominal gauge.</div>
               <div class="preview-flow">
                 <span>Ontology</span>
@@ -88,7 +88,7 @@ ex:TrackShape a sh:NodeShape ;
             <span class="card-arrow" aria-hidden="true"></span>
             <p class="step">Workflow 1</p>
             <h2 class="flow-label"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></h2>
-            <p>Write a business rule, pick the ontology target, and generate a single SHACL
+            <p>Write a data constraint, pick the ontology target, and generate a single SHACL
                shape you can edit, validate and accept.</p>
             <ul class="card-list">
               <li>Semantic ontology-term ranking</li>
@@ -96,11 +96,11 @@ ex:TrackShape a sh:NodeShape ;
               <li>Fast review before accepting</li>
             </ul>
           </a>
-          <a class="card workflow-card" href="guide.html">
+          <a class="card workflow-card" href="batch.html">
             <span class="card-arrow" aria-hidden="true"></span>
             <p class="step">Workflow 2</p>
-            <h2 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Rules</span></h2>
-            <p>Upload a structured batch of business rules (.html or .md). The pipeline
+            <h2 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Shapes</span></h2>
+            <p>Upload a structured batch of data constraints (.html or .md). The pipeline
                resolves each extracted rule and streams generated shapes for review.</p>
             <ul class="card-list">
               <li>Batch validation and rule indexing</li>

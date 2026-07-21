@@ -209,6 +209,27 @@ def ontology_grounding_catalog(
         elif term.get("type") == "property":
             valid_properties.add(ref)
 
+    # Imported vocabularies are often referenced without being redeclared in
+    # the uploaded graph. An explicit object-property domain or range is still
+    # ontology evidence for that class IRI and must remain usable in sh:class.
+    object_properties = set(graph.subjects(RDF.type, OWL.ObjectProperty))
+    datatype_properties = set(graph.subjects(RDF.type, OWL.DatatypeProperty))
+    referenced_classes = set()
+    for ref in valid_properties:
+        referenced_classes.update(
+            value
+            for value in graph.objects(ref, RDFS.domain)
+            if isinstance(value, URIRef)
+        )
+        if ref in datatype_properties:
+            continue
+        for value in graph.objects(ref, RDFS.range):
+            if not isinstance(value, URIRef):
+                continue
+            if ref in object_properties or not str(value).startswith(str(XSD)):
+                referenced_classes.add(value)
+    valid_classes.update(referenced_classes)
+
     role_terms = [
         term
         for values in (target_roles or {}).values()
@@ -250,6 +271,7 @@ def ontology_grounding_catalog(
     return {
         "graph": graph,
         "valid_classes": valid_classes,
+        "referenced_classes": referenced_classes,
         "valid_properties": valid_properties,
         "valid_terms": valid_classes | valid_properties,
         "scoped_properties": scoped_properties,
@@ -325,7 +347,7 @@ def validate_shape_grounding(
         error = "\n".join([
             f"Invalid sh:hasValue: {first['iri']} is the ontology range class of {first['path']}, not a concrete required value.",
             f"Use sh:class {first['iri']} to constrain values of {first['path']} to that class.",
-            "Use sh:hasValue only when the business rule requires one specific individual or literal value.",
+            "Use sh:hasValue only when the data constraint requires one specific individual or literal value.",
         ])
         return {
             "valid": False,
@@ -365,9 +387,9 @@ def validate_shape_grounding(
 
     first = invalid[0]
     error = "\n".join([
-        f"Invalid IRI: {first['iri']} does not exist in the ontology as a valid {first['expected']} for {first['predicate']}.",
+        f"Invalid IRI: {first['iri']} is not declared or referenced by the ontology as a valid {first['expected']} for {first['predicate']}.",
         allowed_ontology_terms_text(catalog),
-        "Use only IRIs from the provided ontology. Do not invent properties or classes.",
+        "Use only IRIs declared or explicitly referenced by the provided ontology. Do not invent properties or classes.",
     ])
     return {
         "valid": False,
@@ -378,5 +400,5 @@ def validate_shape_grounding(
         "error": error,
         "error_type": "grounding",
         "invalid_iris": invalid,
-        "message": "Generated shape references ontology IRIs that are not present in the uploaded ontology.",
+        "message": "Generated shape references IRIs that are not declared or referenced by the uploaded ontology.",
     }

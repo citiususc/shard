@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SHARD — Batch to Rules</title>
+    <title>SHARD — Batch to Shapes</title>
     <link rel="stylesheet" href="css/base.css?v=1">
     <link rel="stylesheet" href="css/workspace.css?v=1">
     <link rel="stylesheet" href="css/editor.css?v=1">
@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="css/support-panels.css?v=1">
     <link rel="stylesheet" href="css/theme.css?v=1">
   </head>
-  <body class="app-page guide-page">
+  <body class="app-page batch-page">
     <header class="topbar">
       <div class="brand">
         <a class="brand-logo-link" href="index.html" aria-label="SHARD home">
@@ -20,12 +20,12 @@
         </a>
         <div class="brand-copy">
           <p class="eyebrow">CITIUS</p>
-          <h1 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Rules</span></h1>
+          <h1 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Shapes</span></h1>
         </div>
       </div>
       <nav class="topnav">
         <a class="navlink flow-label" href="rule.html"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></a>
-        <a class="navlink active flow-label" href="guide.html"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Rules</span></a>
+        <a class="navlink active flow-label" href="batch.html"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Shapes</span></a>
         <button class="logs-button" id="logs-toggle" type="button">
           <span>Logs</span><span class="logs-count" id="logs-count" hidden>0</span>
         </button>
@@ -34,59 +34,82 @@
     </header>
 
     <main class="workspace">
-      <aside class="rail" aria-label="Ontology and models">
+      <aside class="rail" aria-label="Session, ontology and models">
+        <section class="session-toolbar" aria-label="Session management">
+          <div class="session-actions" aria-label="Session import and export">
+            <button id="import-session" class="secondary-button file-import-button" type="button"><svg class="upload-file-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg><span>Import session</span></button>
+            <button id="export-session" class="secondary-button" type="button">Export session</button>
+            <button id="reset-demo" class="icon-button danger-button" type="button" title="Clear all" aria-label="Clear all">↺</button>
+            <input id="session-file" class="file-input" type="file" accept=".json,application/json">
+          </div>
+          <p class="microcopy session-note">Session export excludes tokens and workspace URLs.</p>
+        </section>
+
         <div class="panel-heading">
           <h2>Ontology</h2>
-          <button class="icon-button" id="reset-demo" title="Reset" aria-label="Reset">↺</button>
+          <button class="text-button ontology-clear-button" id="clear-ontology" type="button" disabled>Clear ontology</button>
         </div>
 
         <label class="file-drop" for="ontology-file">
-          <span>Upload ontology</span>
+          <span class="file-drop-title">
+            <svg class="upload-file-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
+            Upload ontology
+          </span>
           <small>.ttl, .rdf, .owl, .nt</small>
         </label>
         <input id="ontology-file" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt">
         <p id="ontology-summary" class="microcopy">No ontology loaded.</p>
 
-        <div class="session-actions" aria-label="Session import and export">
-          <button id="import-session" class="secondary-button" type="button">Import session</button>
-          <button id="export-session" class="secondary-button" type="button">Export session</button>
-          <input id="session-file" class="file-input" type="file" accept=".json,application/json">
+        <div class="namespace-mini-panels">
+          <section class="namespace-mini-panel" aria-labelledby="primary-namespace-title">
+            <div class="namespace-mini-title">
+              <h3 id="primary-namespace-title">Primary ontology</h3>
+              <span class="namespace-source namespace-source-none" id="namespace-source">Not detected</span>
+            </div>
+            <div class="namespace-input-row">
+              <label><span>Namespace</span><input id="base-namespace" class="input" type="text" list="namespace-candidates" autocomplete="off" placeholder="Detected namespace"></label>
+              <label><span>Prefix</span><input id="ontology-prefix" class="input prefix-name-input" type="text" autocomplete="off" placeholder="onto"></label>
+            </div>
+          </section>
+          <section class="namespace-mini-panel" aria-labelledby="shape-namespace-title">
+            <div class="namespace-mini-title">
+              <h3 id="shape-namespace-title">Generated shapes</h3>
+              <span class="namespace-source namespace-source-none" id="shape-namespace-source">Not detected</span>
+              <span class="namespace-source namespace-source-default" id="shape-prefix-source" hidden>Default</span>
+            </div>
+            <div class="namespace-input-row">
+              <label><span>Namespace</span><input id="shape-namespace" class="input" type="text" autocomplete="off" placeholder="Derived namespace"></label>
+              <label><span>Prefix</span><input id="shape-prefix" class="input prefix-name-input" type="text" autocomplete="off" placeholder="shape"></label>
+            </div>
+          </section>
         </div>
-        <p class="microcopy">Session export excludes tokens and workspace URLs.</p>
-
-        <div class="namespace-label-row">
-          <label class="field-label" for="base-namespace">Primary ontology namespace</label>
-          <span class="namespace-source namespace-source-none" id="namespace-source">Not detected</span>
-        </div>
-        <input id="base-namespace" class="input" type="text" list="namespace-candidates" autocomplete="off" placeholder="Detected from ontology terms">
         <datalist id="namespace-candidates"></datalist>
-        <p class="microcopy namespace-summary" id="namespace-summary">No primary ontology namespace detected.</p>
-        <div class="namespace-label-row shape-namespace-row">
-          <label class="field-label" for="shape-namespace">Generated shapes namespace</label>
-          <span class="namespace-source namespace-source-none" id="shape-namespace-source">Not detected</span>
-        </div>
-        <input id="shape-namespace" class="input" type="text" autocomplete="off" placeholder="Derived from the primary namespace">
-        <div class="namespace-label-row shape-prefix-row">
-          <label class="field-label" for="shape-prefix">Preferred shape prefix</label>
-          <span class="namespace-source namespace-source-default" id="shape-prefix-source">Default</span>
-        </div>
-        <input id="shape-prefix" class="input prefix-name-input" type="text" list="shape-prefix-candidates" autocomplete="off" placeholder="shape">
-        <datalist id="shape-prefix-candidates"></datalist>
+        <p class="microcopy namespace-summary" id="namespace-summary" hidden></p>
 
         <section class="inline-panel model-panel">
           <h2>Models</h2>
           <label class="field-label">Inference backend</label>
           <div class="switcher provider-switch" role="group" aria-label="Inference backend">
             <button class="switch-button active" data-provider="databricks">
-              <span>Remote inference</span>
+              <span data-provider-title>Remote inference</span>
+              <small data-provider-subtitle hidden>Remote inference</small>
             </button>
             <button class="switch-button" data-provider="huggingface">
-              <span>Local inference</span>
+              <span data-provider-title>Local inference</span>
+              <small data-provider-subtitle hidden>Local inference</small>
             </button>
           </div>
           <div class="provider-config-stack">
+            <div class="provider-config is-active" data-provider-config="databricks" aria-hidden="false">
+              <div data-provider-private-config hidden>
+                <label class="field-label" for="databricks-base-url">Databricks base URL</label>
+                <input id="databricks-base-url" class="input" type="url" autocomplete="off" placeholder="https://workspace/serving-endpoints">
+                <label class="field-label" for="databricks-token">Databricks token</label>
+                <input id="databricks-token" class="input" type="password" autocomplete="off" placeholder="dapi…">
+              </div>
+            </div>
             <div class="provider-config is-inactive" data-provider-config="huggingface" aria-hidden="true">
-              <div data-hf-local-config>
+              <div data-hf-local-config data-provider-private-config hidden>
                 <label class="field-label" for="hf-token">Model access token</label>
                 <input id="hf-token" class="input" type="password" autocomplete="off" placeholder="Optional for public models">
               </div>
@@ -141,8 +164,11 @@
                     <button id="clear-shape-profile" class="text-button shape-support-clear" type="button" title="Clear validation profiles" aria-label="Clear validation profiles">×</button>
                   </div>
                   <label class="file-drop profile-file-drop" for="shape-profile-files">
-                    <span>Upload profiles</span>
-                    <small>.ttl, .rdf, .owl, .nt · multiple</small>
+                    <span class="file-drop-title">
+                      <svg class="upload-file-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
+                      Upload profiles
+                    </span>
+                    <small>Multiple: TTL, RDF, OWL, NT</small>
                   </label>
                   <input id="shape-profile-files" class="file-input" type="file" accept=".ttl,.rdf,.owl,.nt,.txt" multiple>
                   <div id="shape-profile-list" class="profile-file-list" aria-live="polite"></div>
@@ -150,21 +176,21 @@
 
                 <div class="shape-support-pane astrea-baseline-pane">
                   <div class="section-title">
-                    <h2>Astrea baseline</h2>
+                    <h2>Astrea: Ontology-derived shapes</h2>
                   </div>
                   <div class="astrea-control-row">
                     <label class="field-label astrea-control-label" for="astrea-use-mode">Use Astrea</label>
                     <select id="astrea-use-mode" class="input astrea-select" title="Non-No modes send the loaded ontology to the external Astrea service">
                       <option value="none">No</option>
-                      <option value="baseline">Baseline only</option>
+                      <option value="evidence">Evidence only</option>
                       <option value="merge">Final merge only</option>
-                      <option value="both">Both</option>
+                      <option value="evidence-and-merge">Evidence and merge</option>
                     </select>
                   </div>
                   <div id="astrea-merge-controls" class="astrea-control-row astrea-merge-controls" hidden>
                     <label class="field-label astrea-control-label" for="astrea-merge-technique">Merge</label>
                     <select id="astrea-merge-technique" class="input astrea-select">
-                      <option value="priority-llm">Priority LLM</option>
+                      <option value="generated-priority">Generated priority</option>
                       <option value="restrictive">More restrictive</option>
                     </select>
                   </div>
@@ -173,43 +199,40 @@
               </div>
             </section>
 
-            <section class="section-block guide-template-block">
-              <div class="section-title"><h2>Business-rule batch</h2></div>
-              <label class="file-drop" for="guide-file">
-                <span>Upload business rules</span>
+            <section class="section-block batch-template-block">
+              <div class="section-title"><h2>Data-constraint batch</h2></div>
+              <label class="file-drop" for="batch-file">
+                <span class="file-drop-title">
+                  <svg class="upload-file-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
+                  Upload data constraints
+                </span>
                 <small>.html, .md · structured format</small>
               </label>
-              <input id="guide-file" class="file-input" type="file" accept=".html,.htm,.md,.markdown">
-              <p id="guide-summary" class="microcopy">No business-rule batch loaded.</p>
+              <input id="batch-file" class="file-input" type="file" accept=".html,.htm,.md,.markdown">
+              <p id="batch-summary" class="microcopy">No data-constraint batch loaded.</p>
 
               <div class="template-help">
                 <p>Uploaded files must follow the required batch structure.</p>
-                <div class="template-links" aria-label="Business-rule batch templates">
+                <div class="template-links" aria-label="Data-constraint batch templates">
                   <span>Download formats:</span>
-                  <a href="templates/business_rules_template.html" download>HTML</a>
-                  <a href="templates/business_rules_template.md" download>Markdown</a>
+                  <a href="templates/data_constraints_template.html" download>HTML</a>
+                  <a href="templates/data_constraints_template.md" download>Markdown</a>
                 </div>
               </div>
 
-              <button id="generate-guide" class="primary-button full-width" disabled>Process business-rule batch</button>
+              <button id="generate-batch" class="primary-button full-width" disabled>Process data-constraint batch</button>
             </section>
 
             <section class="section-block generated-shapes-block">
-              <div class="section-title">
+              <div class="section-title generated-shapes-heading">
                 <h2>Generated shapes</h2>
-                <span id="queue-count" class="tag">0 shapes</span>
-              </div>
-              <div class="guide-progress">
-                <div class="section-title compact-title">
-                  <h3>Progress</h3>
-                  <span id="progress-tag" class="tag">0 / 0 business rules processed</span>
+                <div class="batch-progress-heading" aria-label="Batch generation progress">
+                  <div class="progress-track"><div id="progress-bar" class="progress-fill"></div></div>
+                  <span id="progress-tag" class="tag" title="0 / 0 data constraints processed">0 / 0 processed</span>
+                  <button id="cancel-generation" class="secondary-button danger-button" type="button" aria-label="Cancel generation" disabled>Cancel</button>
                 </div>
-                <div class="progress-track"><div id="progress-bar" class="progress-fill"></div></div>
-                <p id="progress-status" class="microcopy">No generation running.</p>
               </div>
-              <div class="generation-controls" aria-label="Generation controls">
-                <button id="cancel-generation" class="secondary-button danger-button" type="button" aria-label="Cancel generation" disabled>Cancel</button>
-              </div>
+              <p id="progress-status" class="microcopy batch-progress-status">No generation running.</p>
               <div id="queue-list" class="queue-list"></div>
             </section>
           </div>
@@ -228,26 +251,26 @@
 
             <section class="section-block current-business-rule-block">
               <div class="section-title">
-                <h2>Business Rule</h2>
+                <h2>Data constraint</h2>
                 <span id="current-rule-tag" class="tag">—</span>
               </div>
-              <textarea id="current-business-rule" class="textarea compact" readonly placeholder="Select a generated shape to see the related business rule."></textarea>
+              <textarea id="current-business-rule" class="textarea compact" readonly placeholder="Select a generated shape to see the related data constraint."></textarea>
             </section>
 
             <section class="section-block shape-editor-block">
               <div class="section-title">
                 <h2 id="editor-title">Editable shape</h2>
-                <button id="copy-shape" class="secondary-button">Copy</button>
+                <div class="section-title-actions shape-editor-actions">
+                  <button id="copy-shape" class="secondary-button">Copy</button>
+                  <button id="validate-shape" class="secondary-button">Check</button>
+                  <button id="accept-shape" class="primary-button">Accept</button>
+                </div>
               </div>
               <div class="code-wrap">
                 <pre class="code-highlight" aria-hidden="true"><code id="shape-editor-hl"></code></pre>
                 <textarea id="shape-editor" class="code-editor" spellcheck="false" wrap="off" placeholder="Select a generated shape to review and edit."></textarea>
               </div>
-              <div class="editor-actions">
-                <button id="validate-shape" class="secondary-button">Check</button>
-                <button id="accept-shape" class="primary-button">Accept</button>
-              </div>
-              <div id="validation-panel" class="validation-panel">Upload a valid business-rule batch and generate shapes to start reviewing.</div>
+              <div id="validation-panel" class="validation-panel">Upload a valid data-constraint batch and generate shapes to start reviewing.</div>
             </section>
 
             <section class="section-block accepted-shapes-block">
@@ -255,6 +278,7 @@
                 <h2>Accepted shapes</h2>
                 <div class="section-actions">
                   <button id="accept-all-shapes" class="secondary-button accept-all-button" type="button" disabled>Accept all</button>
+                  <button id="remove-all-accepted-shapes" class="secondary-button danger-button remove-all-accepted-button" type="button" disabled>Remove all</button>
                   <span id="coverage-tag" class="tag">0 accepted</span>
                 </div>
               </div>
@@ -292,6 +316,6 @@
     <script src="js/ontology.js?v=1"></script>
     <script src="js/shapes.js?v=1"></script>
     <script src="js/export.js?v=1"></script>
-    <script src="js/guide.js?v=1"></script>
+    <script src="js/batch.js?v=1"></script>
   </body>
 </html>

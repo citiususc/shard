@@ -43,11 +43,11 @@ class ApiContractTests(unittest.TestCase):
             "authoring-workflow",
         )
         self.assertEqual(
-            endpoint_for_operation("workflows.guide.generate").service_id,
+            endpoint_for_operation("workflows.batch.generate").service_id,
             "authoring-workflow",
         )
         self.assertEqual(
-            endpoint_for_operation("guides.generate").service_id,
+            endpoint_for_operation("batches.generate").service_id,
             "authoring-workflow",
         )
         self.assertEqual(
@@ -91,12 +91,14 @@ class ApiContractTests(unittest.TestCase):
         self.assertEqual(
             auxiliary,
             {
-                "ontology.index.prepare",
-                "ontology.index.status",
-                "ontology.index.cancel",
+                "ontology.index.create",
+                "ontology.index.get",
+                "ontology.index.delete",
                 "models.check",
                 "models.local.status",
-                "models.local.download",
+                "models.local.download.create",
+                "models.local.download.get",
+                "models.local.download.delete",
             },
         )
         primary_services = {
@@ -109,21 +111,33 @@ class ApiContractTests(unittest.TestCase):
     def test_frontend_endpoint_map_supports_unified_and_split_layouts(self):
         unified = frontend_endpoint_map("unified")
         split = frontend_endpoint_map("split")
-        self.assertTrue(all(url.startswith(API_PREFIX) for url in unified.values()))
+        self.assertTrue(all(
+            not url or url.startswith(API_PREFIX) for url in unified.values()
+        ))
+        self.assertNotIn("term_status", unified)
+        self.assertNotIn("cancel_terms", unified)
+        self.assertNotIn("terms", unified)
+        self.assertNotIn("terms", split)
+        self.assertEqual(unified["prepare_terms"], "/api/v1/ontology/indexes")
+        self.assertEqual(
+            unified["download_local_model"],
+            "/api/v1/models/local/downloads",
+        )
         self.assertEqual(split["capabilities"], f"{API_PREFIX}/capabilities")
         self.assertEqual(split["parse"], "http://127.0.0.1:9100/parse-ontology")
         self.assertEqual(
             split["astrea"],
             "http://127.0.0.1:9102/generate-astrea-baseline",
         )
-        self.assertEqual(split["guide"], "http://127.0.0.1:9103/generate-from-guide")
+        self.assertEqual(split["batch"], "http://127.0.0.1:9103/generate-from-batch")
         self.assertEqual(
-            split["localModelStatus"],
+            split["local_model_status"],
             "http://127.0.0.1:9102/local-model-status",
         )
+        self.assertEqual(split["prepare_terms"], "/api/v1/ontology/indexes")
         self.assertEqual(
-            split["downloadLocalModel"],
-            "http://127.0.0.1:9102/download-local-model",
+            split["download_local_model"],
+            "/api/v1/models/local/downloads",
         )
         with self.assertRaises(ValueError):
             normalize_service_layout("unknown")

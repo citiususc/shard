@@ -1,9 +1,9 @@
 # SHARD
 
-**An Interactive Ontology-Grounded SHACL Authoring from Business Rules**
+**An Interactive Workbench for Ontology-Grounded SHACL Authoring from Data Constraints**
 
 SHARD is a local and web application for generating reviewable SHACL shapes
-from an OWL/RDF ontology and business rules written in natural language. It
+from an OWL/RDF ontology and data constraints written in natural language. It
 keeps a human in the loop: generated Turtle can be inspected, edited,
 validated, accepted and exported.
 
@@ -11,17 +11,17 @@ validated, accepted and exported.
 
 ### Rule to Shape
 
-Write one business rule and resolve its ontology context into focus nodes,
+Write one data constraint and resolve its ontology context into focus nodes,
 constrained property paths and related terms. The proposed roles can be
 reviewed manually before SHARD generates one grounded constraint document.
 
-### Batch to Rules
+### Batch to Shapes
 
-Upload a structured Markdown or HTML batch of business rules. SHARD parses each
+Upload a structured Markdown or HTML batch of data constraints. SHARD parses each
 rule, resolves it to role-grouped ontology terms through the `label -> semantic -> LLM`
 cascade, generates one coherent constraint document per resolved rule, and consolidates
 compatible property constraints under target-class NodeShapes. Progress is
-streamed per business rule.
+streamed per data constraint.
 
 Rules that cannot be resolved and generated outputs that fail validation remain
 visible for review; SHARD does not force or silently discard them.
@@ -66,7 +66,11 @@ The UI exposes neutral remote/local inference choices and model settings. A
 remote deployment reads its endpoint and credentials from
 `DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN`; these secrets are not displayed or
 stored in the browser. Programmatic API clients may still supply request-scoped
-credentials. The normal user flow does not require a `.env` file.
+credentials. On startup, SHARD loads the first `.env` file found in the current
+working directory or project root. Existing process variables take precedence,
+followed by `.env` values and then built-in defaults; explicit command-line
+arguments override the resulting deployment settings. Start from `.env.example`
+for a public deployment and never commit the resulting `.env` file.
 
 The package can also be installed in editable mode:
 
@@ -104,8 +108,9 @@ python run_demo.py --deployment-profile public --host 0.0.0.0
 ```
 
 This is an application policy, not a complete production perimeter. Put public
-deployments behind HTTPS, authentication where appropriate, request limits and
-a reverse proxy. Expose the unified web port only.
+deployments behind HTTPS, explicit network policy and a reverse proxy. SHARD does
+not authenticate API clients; provider credentials are used only for inference.
+Expose the unified web port only.
 
 ## Examples
 
@@ -113,7 +118,7 @@ Two domains are included:
 
 - `examples/asset-maintenance/`: general non-ERA ontology, rules, context and a
   sample validation profile.
-- `examples/era-rinf/`: compact ERA/RINF ontology and Business Rules fixtures.
+- `examples/era-rinf/`: compact ERA/RINF ontology and Data Constraints fixtures.
 
 The generic SHACL for SHACL profile is packaged at
 `src/shard/resources/validation/shacl-shacl.ttl`. The ERA-specific profile is
@@ -122,7 +127,7 @@ kept separately at `profiles/era/era-shacl-shacl.ttl`.
 ## Architecture
 
 SHARD exposes one versioned application API and models five logical capability
-boundaries: ontology catalog and retrieval, business rule grounding, shape
+boundaries: ontology catalog and retrieval, data constraint grounding, shape
 generation, shape assurance and baseline integration, and authoring workflow
 orchestration. These are scientific and API responsibilities, not a requirement
 to deploy five operating-system services.
@@ -140,7 +145,7 @@ See [architecture](docs/architecture.md), [HTTP API](docs/api.md), and
 
 ```text
 src/shard/
-  domain/          business-rule and ontology concepts
+  domain/          data-constraint and ontology concepts
   application/     resolution, generation, validation and orchestration
   inference/       Databricks and local Hugging Face adapters
   baselines/       Astrea parsing, evidence selection and merge strategies
@@ -166,7 +171,11 @@ The canonical API is under `/api/v1`. Complete workflows for external clients
 are available as single JSON requests:
 
 - `POST /api/v1/workflows/rule-to-shape`
-- `POST /api/v1/workflows/guide-to-shapes`
+- `POST /api/v1/workflows/batch-to-shapes`
+- `GET /api/v1/redoc` (ReDoc)
+
+The batch resource implements the Guide-to-Shapes workflow described in the
+system architecture and paper.
 
 The existing SSE and fine-grained operations remain available:
 
@@ -178,19 +187,24 @@ The existing SSE and fine-grained operations remain available:
 - `POST /api/v1/baselines/astrea`
 - `POST /api/v1/shapes/merge`
 - `POST /api/v1/models/local/status`
-- `POST /api/v1/models/local/download` (SSE)
-- `POST /api/v1/guides/generate` (SSE)
+- `POST /api/v1/models/local/downloads` (create a pollable job)
+- `POST /api/v1/batches/generate` (SSE)
 - `GET /api/v1`
 - `GET /api/v1/docs` (Swagger UI)
 - `GET /api/v1/openapi.json`
 - `GET /api/v1/capabilities`
 - `GET /api/v1/health`
 
-Canonical responses expose non-secret request provenance and `X-SHARD-*`
-headers. Pre-rename `X-BR2SHACL-*` headers and environment aliases remain
+SHARD does not require a client token or API key. Ontology indexing and local
+model downloads use the canonical asynchronous job resources shown above in
+both unified and split service layouts.
+
+Canonical responses expose typed operation metadata; authoring operations also
+expose secret-free authoring provenance. `X-SHARD-*` headers identify the API
+operation. Pre-rename `X-BR2SHACL-*` headers and environment aliases remain
 accepted during API v1 for compatibility.
 
-See the [API guide](docs/api.md), the live Swagger UI and OpenAPI 3.1
+See the [API documentation](docs/api.md), the live Swagger UI and OpenAPI 3.1
 document, and the standard-library clients in [`examples/api`](examples/api).
 
 ## Target-Resolution Experiment

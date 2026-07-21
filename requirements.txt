@@ -11,3 +11,5 @@ langchain-core>=0.2
 
 # Business Rules HTML parsing
 beautifulsoup4>=4.12
+pydantic>=2.7
+python-dotenv>=1.0

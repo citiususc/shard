@@ -195,7 +195,6 @@ def swagger_ui_document(openapi_url: str) -> str:
         displayRequestDuration: true,
         docExpansion: "list",
         filter: true,
-        persistAuthorization: false,
         requestSnippetsEnabled: true,
         showCommonExtensions: true,
         showExtensions: true,

@@ -1,5 +1,6 @@
-"""Generate one ontology-grounded SHACL shape from a business rule."""
+"""Generate and audit one ontology-grounded SHACL document per data constraint."""
 
+import json
 import re
 from pathlib import Path
 
@@ -21,9 +22,20 @@ from shard.application.shape_validation import (
     validate_shape_grounding,
 )
 
+
+def _is_timeout_error(error):
+    """Recognize provider timeout families without coupling to one SDK."""
+    current = error
+    while current is not None:
+        if isinstance(current, TimeoutError) or "timeout" in type(current).__name__.lower():
+            return True
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return False
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 MAX_RETRIES = 10
+MAX_CRITIC_FORMAT_RETRIES = 2
 
 _PREFIX_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 _PREFIX_DECLARATION_RE = re.compile(
@@ -91,7 +103,19 @@ def _normalise_target_roles(payload, ontology_content, ontology_filename, target
     seen = set()
     for role in _TARGET_ROLE_KEYS:
         for value in raw_roles.get(role) or []:
-            term = value if isinstance(value, dict) else lookup.get(str(value))
+            if isinstance(value, dict):
+                reference = next(
+                    (
+                        str(value.get(key))
+                        for key in ("full_iri", "iri", "id", "label")
+                        if value.get(key)
+                    ),
+                    "",
+                )
+                catalog_term = lookup.get(reference)
+                term = {**catalog_term, **value} if catalog_term else value
+            else:
+                term = lookup.get(str(value))
             if term is None:
                 text = str(value or "").strip()
                 term = {"iri": text, "full_iri": text} if text else None
@@ -119,15 +143,58 @@ def _primary_target(target_roles, fallback=None):
 
 def _target_context_text(target_roles):
     labels = {
-        "focus_nodes": "Focus nodes/classes",
-        "constraint_paths": "Constrained property paths",
-        "related_terms": "Related ontology terms",
+        "focus_nodes": "Focus nodes/classes (authorized sh:targetClass candidates)",
+        "constraint_paths": "Constrained property paths (AUTHORITATIVE sh:path allowlist)",
+        "related_terms": "Related ontology terms (context only; not additional targets or paths)",
     }
-    lines = []
+
+    def field_text(value):
+        values = value if isinstance(value, list) else [value]
+        rendered = []
+        for item in values:
+            if isinstance(item, dict):
+                text = item.get("full_iri") or item.get("iri") or item.get("label")
+            else:
+                text = item
+            if text and str(text) not in {"—", "blank node"}:
+                rendered.append(str(text))
+        return ", ".join(rendered) or "(not specified)"
+
+    def term_line(term, role):
+        iri = term.get("iri") or term.get("full_iri") or "(missing IRI)"
+        details = [f"label={term.get('label') or '(none)'}"]
+        full_iri = term.get("full_iri")
+        if full_iri and full_iri != iri:
+            details.append(f"full_iri={full_iri}")
+        if term.get("type"):
+            details.append(f"type={term['type']}")
+        if term.get("kind"):
+            details.append(f"kind={term['kind']}")
+        if term.get("domain"):
+            details.append(f"domain={field_text(term['domain'])}")
+        range_text = field_text(term.get("range")) if term.get("range") else ""
+        if range_text:
+            details.append(f"range={range_text}")
+        if role == "constraint_paths" and range_text:
+            kind = str(term.get("kind") or "").lower()
+            if "objectproperty" in kind:
+                details.append(f"value-shape evidence=sh:class {range_text}")
+            elif "datatypeproperty" in kind:
+                details.append(f"datatype evidence={range_text}")
+        return f"- {iri} | " + " | ".join(details)
+
+    lines = [
+        "Role contract:",
+        "- Every sh:path MUST be selected from the constrained property path allowlist below.",
+        "- Never replace an authorized path with a semantically similar ontology property.",
+        "- Related terms may support sh:class, datatype, node or logical context, but are not sh:path values.",
+    ]
     for role in _TARGET_ROLE_KEYS:
         terms = target_roles.get(role) or []
-        values = [str(term.get("full_iri") or term.get("iri") or "") for term in terms]
-        lines.append(f"{labels[role]}: {', '.join(value for value in values if value) or '(none)'}")
+        lines.append(f"\n{labels[role]}:")
+        lines.extend(term_line(term, role) for term in terms)
+        if not terms:
+            lines.append("- (none)")
     return "\n".join(lines)
 
 
@@ -199,6 +266,136 @@ def _hints_from_shape(shape_str, prefixes):
             seen.add(h["constraint"])
             out.append(h)
     return out[:12]
+
+
+def _semantic_issue(value, *, default_code="SEMANTIC_REVIEW_ISSUE"):
+    """Normalize one concise critic finding without retaining model reasoning."""
+    if isinstance(value, str):
+        return {"code": default_code, "message": value.strip(), "path": None}
+    if not isinstance(value, dict):
+        return None
+    message = str(value.get("message") or value.get("description") or "").strip()
+    if not message:
+        return None
+    path = str(value.get("path") or "").strip() or None
+    return {
+        "code": str(value.get("code") or default_code).strip() or default_code,
+        "message": message,
+        "path": path,
+    }
+
+
+def _parse_semantic_review(raw):
+    """Parse and normalize the critic's closed JSON report."""
+    text = str(raw or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("The semantic critic did not return a JSON object.")
+    try:
+        document, end = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"The semantic critic returned invalid JSON: {exc.msg}.") from exc
+    if text[start + end:].strip():
+        raise ValueError("The semantic critic returned text after its JSON object.")
+    if not isinstance(document, dict):
+        raise ValueError("The semantic critic report must be a JSON object.")
+
+    raw_status = str(document.get("status") or "").strip().lower().replace("-", "_")
+    status = {
+        "passed": "passed",
+        "pass": "passed",
+        "valid": "passed",
+        "ok": "passed",
+        "needs_correction": "needs_correction",
+        "fail": "needs_correction",
+        "failed": "needs_correction",
+    }.get(raw_status)
+    if status is None:
+        raise ValueError("The semantic critic status must be 'passed' or 'needs_correction'.")
+
+    raw_issues = document.get("issues") or []
+    if not isinstance(raw_issues, list):
+        raise ValueError("The semantic critic issues field must be an array.")
+    issues = []
+    for item in raw_issues:
+        issue = _semantic_issue(item)
+        if issue:
+            issues.append(issue)
+    clauses = document.get("clauses") or []
+    if not isinstance(clauses, list):
+        raise ValueError("The semantic critic clauses field must be an array.")
+    normalized_clauses = []
+    for clause in clauses:
+        if not isinstance(clause, dict):
+            continue
+        path = str(clause.get("path") or "").strip()
+        raw_clause_issues = clause.get("issues") or []
+        if not isinstance(raw_clause_issues, list):
+            raise ValueError("Each semantic critic clause issues field must be an array.")
+        clause_issues = []
+        for item in raw_clause_issues:
+            issue = _semantic_issue(item)
+            if issue:
+                if not issue.get("path") and path:
+                    issue["path"] = path
+                clause_issues.append(issue)
+                issues.append(issue)
+        normalized_clauses.append({
+            "path": path,
+            "cardinality": str(clause.get("cardinality") or "not_applicable"),
+            "value_constraint": str(clause.get("value_constraint") or "not_applicable"),
+            "issues": clause_issues,
+        })
+
+    unique_issues = []
+    seen = set()
+    for issue in issues:
+        key = (issue.get("code"), issue.get("path"), issue.get("message"))
+        if key not in seen:
+            seen.add(key)
+            unique_issues.append(issue)
+    if unique_issues:
+        status = "needs_correction"
+    elif status == "needs_correction":
+        unique_issues.append({
+            "code": "UNSPECIFIED_SEMANTIC_MISMATCH",
+            "message": "The critic requested correction without describing a specific mismatch.",
+            "path": None,
+        })
+
+    return {
+        "status": status,
+        "summary": str(document.get("summary") or "").strip(),
+        "clauses": normalized_clauses,
+        "issues": unique_issues,
+    }
+
+
+def _mechanical_review(error_type, message):
+    """Represent deterministic validation feedback as a corrector input."""
+    return {
+        "status": "needs_correction",
+        "summary": "The candidate failed deterministic SHACL validation.",
+        "clauses": [],
+        "issues": [{
+            "code": f"{str(error_type or 'validation').upper()}_VALIDATION_FAILED",
+            "message": str(message or "SHACL validation failed."),
+            "path": None,
+        }],
+    }
+
+
+def _public_semantic_review(status, critic_calls, correction_count, issues):
+    """Build the stable, concise semantic-review result exposed by the API."""
+    return {
+        "status": status,
+        "critic_calls": critic_calls,
+        "correction_count": correction_count,
+        "issues_found": len(issues),
+        "issues": issues,
+    }
 
 def build_shape(payload):
     from shard.application.generation_support import clean_shacl_response
@@ -296,14 +493,40 @@ def build_shape(payload):
         )
         ontology_info = "\n\n".join([
             ontology_info.strip(),
-            "# Allowed ontology IRIs for generated shapes",
+            (
+                "# Ontology IRI catalog for targets, classes and range references\n"
+                "The authoritative sh:path allowlist remains the constrained property paths "
+                "in the role contract."
+            ),
             allowed_ontology_terms_text(grounding_catalog),
         ]).strip()
 
     prompt_file = PACKAGE_ROOT / "resources" / "prompts" / "rule_general.json"
 
-    gen_model = get_chat_llm(model_id, kind="generator", temperature=temperature,
-                             max_new_tokens=DEFAULT_GEN_MAX_NEW_TOKENS)
+    max_new_tokens = int(payload.get("max_new_tokens", DEFAULT_GEN_MAX_NEW_TOKENS))
+    gen_model = get_chat_llm(
+        model_id,
+        kind="generator",
+        temperature=temperature,
+        max_new_tokens=max_new_tokens,
+    )
+    llm_review_enabled = bool(payload.get("llm_review", True))
+    review_max_attempts = max(1, min(int(payload.get("review_max_attempts", 3)), 5))
+    critic_model = None
+    corrector_model = None
+    if llm_review_enabled:
+        critic_model = get_chat_llm(
+            model_id,
+            kind="critic",
+            temperature=0.0,
+            max_new_tokens=max_new_tokens,
+        )
+        corrector_model = get_chat_llm(
+            model_id,
+            kind="corrector",
+            temperature=0.0,
+            max_new_tokens=max_new_tokens,
+        )
 
     attempt = 0
     error_message = None
@@ -336,8 +559,9 @@ def build_shape(payload):
         except Exception as e:
             # Backend/credentials/endpoint error — NOT a Turtle parse error.
             logger.error(f"[build] backend error: {e}")
+            backend_error_type = "timeout" if _is_timeout_error(e) else "backend"
             return {"shape": "", "valid": False, "error": str(e), "attempts": attempt,
-                    "hints": [], "fallback": False, "error_type": "backend",
+                    "hints": [], "fallback": False, "error_type": backend_error_type,
                     "message": f"Backend error calling the model: {e}"}
         last_result = clean_shacl_response(result)
 
@@ -373,20 +597,300 @@ def build_shape(payload):
             attempt += 1
             continue
 
-        validation = validate_shape_content(
-            last_result,
-            prefixes,
-            validation_profiles_from_payload(payload),
-        )
-        if not validation.get("valid"):
-            logger.info(f"[build] generated shape failed validation profile on attempt {attempt + 1}")
-            hints = _hints_from_shape(last_result, prefixes)
-            return {"shape": last_result, "attempts": attempt + 1, "hints": hints,
-                    "fallback": False, **validation}
+        review_attempts = 0
+        llm_review_applied = False
+        semantic_review = _public_semantic_review("not_run", 0, 0, [])
+        validation = None
+        if llm_review_enabled:
+            reviewed_result = last_result
+            correction_count = 0
+            critic_calls = 0
+            collected_issues = []
+            pending_report = None
+            last_review_error = None
+
+            while True:
+                if pending_report is None:
+                    report = None
+                    format_error = None
+                    for format_attempt in range(MAX_CRITIC_FORMAT_RETRIES):
+                        critic_key = (
+                            "semantic_critic_with_error"
+                            if format_error else "semantic_critic"
+                        )
+                        logger.debug(
+                            f"[build] semantic critic call {critic_calls + 1} "
+                            f"using prompt '{critic_key}'"
+                        )
+                        critic_prompt = load_prompt_from_json(prompt_file, critic_key)
+                        critic_chain = critic_prompt | critic_model | StrOutputParser()
+                        critic_vars = {
+                            "target_context": _target_context_text(target_roles),
+                            "prefixes": prefixes,
+                            "ontology_info": ontology_info,
+                            "domain_context": domain_context,
+                            "rule": rule,
+                            "generation_guidance": generation_guidance,
+                            "candidate_shapes": reviewed_result,
+                        }
+                        if format_error:
+                            critic_vars["error"] = format_error
+                        try:
+                            critic_raw = critic_chain.invoke(critic_vars)
+                        except Exception as exc:
+                            logger.error(f"[build] semantic critic backend error: {exc}")
+                            backend_error_type = (
+                                "timeout" if _is_timeout_error(exc) else "backend"
+                            )
+                            return {
+                                "shape": reviewed_result,
+                                "valid": False,
+                                "error": str(exc),
+                                "attempts": attempt + 1,
+                                "review_attempts": review_attempts,
+                                "llm_review_applied": False,
+                                "semantic_review": _public_semantic_review(
+                                    "failed", critic_calls, correction_count,
+                                    collected_issues,
+                                ),
+                                "hints": [],
+                                "fallback": False,
+                                "error_type": backend_error_type,
+                                "message": f"Backend error during semantic critique: {exc}",
+                            }
+                        critic_calls += 1
+                        review_attempts += 1
+                        try:
+                            report = _parse_semantic_review(critic_raw)
+                            break
+                        except ValueError as exc:
+                            format_error = str(exc)
+                            logger.warn(
+                                f"[build] semantic critic format error on call "
+                                f"{critic_calls}: {format_error}"
+                            )
+                    if report is None:
+                        last_review_error = format_error
+                        error_type = "review"
+                        break
+                else:
+                    report = pending_report
+                    pending_report = None
+
+                for issue in report.get("issues") or []:
+                    key = (issue.get("code"), issue.get("path"), issue.get("message"))
+                    if not any(
+                        (item.get("code"), item.get("path"), item.get("message")) == key
+                        for item in collected_issues
+                    ):
+                        collected_issues.append(issue)
+
+                if report["status"] == "passed":
+                    validation = validate_shape_content(
+                        reviewed_result,
+                        prefixes,
+                        validation_profiles_from_payload(payload),
+                    )
+                    if validation.get("valid"):
+                        last_result = reviewed_result
+                        llm_review_applied = True
+                        semantic_review = _public_semantic_review(
+                            "passed", critic_calls, correction_count, collected_issues,
+                        )
+                        logger.info(
+                            f"[build] semantic critic passed after {critic_calls} "
+                            f"check(s) and {correction_count} correction(s)"
+                        )
+                        break
+                    last_review_error = str(
+                        validation.get("error") or "SHACL validation failed."
+                    )
+                    error_type = str(validation.get("error_type") or "profile")
+                    report = _mechanical_review(error_type, last_review_error)
+                    for issue in report["issues"]:
+                        collected_issues.append(issue)
+
+                if correction_count >= review_max_attempts:
+                    last_review_error = (
+                        report.get("summary")
+                        or "; ".join(
+                            issue.get("message", "") for issue in report.get("issues") or []
+                        )
+                        or "The semantic critic still requires correction."
+                    )
+                    error_type = "review"
+                    break
+
+                logger.debug(
+                    f"[build] semantic corrector call {correction_count + 1}/"
+                    f"{review_max_attempts}"
+                )
+                corrector_prompt = load_prompt_from_json(
+                    prompt_file, "semantic_corrector"
+                )
+                corrector_chain = corrector_prompt | corrector_model | StrOutputParser()
+                corrector_vars = {
+                    "target_context": _target_context_text(target_roles),
+                    "prefixes": prefixes,
+                    "shape_prefix": shape_prefix,
+                    "ontology_info": ontology_info,
+                    "domain_context": domain_context,
+                    "rule": rule,
+                    "generation_guidance": generation_guidance,
+                    "astrea_shapes": astrea_shapes or "(none matched for this rule)",
+                    "candidate_shapes": reviewed_result,
+                    "audit_report": json.dumps(report, ensure_ascii=False, indent=2),
+                }
+                try:
+                    corrected_raw = corrector_chain.invoke(corrector_vars)
+                except Exception as exc:
+                    logger.error(f"[build] semantic corrector backend error: {exc}")
+                    backend_error_type = "timeout" if _is_timeout_error(exc) else "backend"
+                    return {
+                        "shape": reviewed_result,
+                        "valid": False,
+                        "error": str(exc),
+                        "attempts": attempt + 1,
+                        "review_attempts": review_attempts,
+                        "llm_review_applied": False,
+                        "semantic_review": _public_semantic_review(
+                            "failed", critic_calls, correction_count,
+                            collected_issues,
+                        ),
+                        "hints": [],
+                        "fallback": False,
+                        "error_type": backend_error_type,
+                        "message": f"Backend error during semantic correction: {exc}",
+                    }
+                correction_count += 1
+                review_attempts += 1
+                reviewed_result = clean_shacl_response(corrected_raw)
+
+                if not reviewed_result or "SHACL shapes not found" in corrected_raw:
+                    last_review_error = (
+                        "The semantic corrector did not return a complete Turtle document."
+                    )
+                    error_type = "review"
+                    pending_report = _mechanical_review(
+                        error_type, last_review_error
+                    )
+                    continue
+
+                syntax = validate_shape_content(reviewed_result, prefixes, [])
+                if not syntax.get("syntax_valid"):
+                    last_review_error = str(
+                        syntax.get("error") or "Invalid Turtle output."
+                    )
+                    error_type = "parse"
+                    logger.warn(
+                        f"[build] corrected Turtle failed parse: {last_review_error}"
+                    )
+                    pending_report = _mechanical_review(
+                        error_type, last_review_error
+                    )
+                    continue
+
+                reviewed_grounding = validate_shape_grounding(
+                    reviewed_result,
+                    prefixes,
+                    ontology_content,
+                    ontology_filename,
+                    target,
+                    grounding_catalog,
+                    target_roles,
+                )
+                if not reviewed_grounding.get("valid"):
+                    last_review_error = str(
+                        reviewed_grounding.get("error")
+                        or "Ontology grounding failed."
+                    )
+                    error_type = "grounding"
+                    logger.warn(
+                        f"[build] corrected Turtle failed grounding: "
+                        f"{last_review_error}"
+                    )
+                    pending_report = _mechanical_review(
+                        error_type, last_review_error
+                    )
+                    continue
+
+                validation = validate_shape_content(
+                    reviewed_result,
+                    prefixes,
+                    validation_profiles_from_payload(payload),
+                )
+                if not validation.get("valid"):
+                    last_review_error = str(
+                        validation.get("error") or "SHACL validation failed."
+                    )
+                    error_type = str(validation.get("error_type") or "profile")
+                    logger.warn(
+                        f"[build] corrected Turtle failed validation: "
+                        f"{last_review_error}"
+                    )
+                    pending_report = _mechanical_review(
+                        error_type, last_review_error
+                    )
+                    continue
+
+                # A mechanically valid correction must be audited again. The
+                # final critic, rather than the corrector itself, closes the loop.
+                pending_report = None
+
+            if not llm_review_applied:
+                semantic_review = _public_semantic_review(
+                    "failed", critic_calls, correction_count, collected_issues,
+                )
+                logger.error(
+                    f"[build] semantic critic/corrector loop failed after "
+                    f"{critic_calls} critic call(s) and {correction_count} "
+                    f"correction(s): {last_review_error}"
+                )
+                return {
+                    "shape": reviewed_result,
+                    "valid": False,
+                    "error": last_review_error,
+                    "attempts": attempt + 1,
+                    "review_attempts": review_attempts,
+                    "llm_review_applied": False,
+                    "semantic_review": semantic_review,
+                    "hints": _hints_from_shape(reviewed_result, prefixes),
+                    "fallback": False,
+                    "error_type": error_type,
+                    "message": (
+                        "Semantic critique and correction did not converge within "
+                        f"{review_max_attempts} correction attempt(s)."
+                    ),
+                }
+        else:
+            validation = validate_shape_content(
+                last_result,
+                prefixes,
+                validation_profiles_from_payload(payload),
+            )
+            if not validation.get("valid"):
+                logger.info(
+                    f"[build] generated shape failed validation profile on attempt "
+                    f"{attempt + 1}"
+                )
+                hints = _hints_from_shape(last_result, prefixes)
+                return {
+                    "shape": last_result,
+                    "attempts": attempt + 1,
+                    "review_attempts": 0,
+                    "llm_review_applied": False,
+                    "semantic_review": semantic_review,
+                    "hints": hints,
+                    "fallback": False,
+                    **validation,
+                }
 
         logger.info(f"[build] valid SHACL on attempt {attempt + 1}")
         hints = _hints_from_shape(last_result, prefixes)
         return {"shape": last_result, "valid": True, "error": None, "attempts": attempt + 1,
+                "review_attempts": review_attempts,
+                "llm_review_applied": llm_review_applied,
+                "semantic_review": semantic_review,
                 "hints": hints, "fallback": False, "error_type": "none",
                 "astrea_evidence_active": bool(astrea_shapes),
                 "target_roles": target_roles,

@@ -2,15 +2,15 @@
   "generator": [
     {
       "role": "system",
-      "content": "You are an expert in OWL ontologies and SHACL. You generate one coherent SHACL constraint document for one business rule, which may involve multiple classes and properties. You work with ontologies in ANY domain and rely only on the information you are given."
+      "content": "You are an expert in OWL ontologies and SHACL. You generate one coherent SHACL constraint document for one data constraint, which may involve multiple classes and properties. You work with ontologies in ANY domain and rely only on the information you are given."
     },
     {
       "role": "system",
-      "content": "You will receive:\n- Ontology terms grouped by role: focus nodes/classes, constrained property paths, and related terms.\n- Ontology information about all those terms, including property domains and ranges.\n- A business rule written by the user: the primary constraint to encode as one logical unit.\n- Optional Astrea baseline shapes relevant to those terms. Treat them as structural evidence and a starting point: preserve compatible baseline constraints, refine or extend them with the business rule, and never copy unrelated constraints. If baseline evidence conflicts with explicit ontology evidence or the business rule, follow the ontology and rule.\n- Optional domain context and generation guidance.\n- Prefixes in scope. Use ONLY these prefixes and do not redeclare them."
+      "content": "You will receive:\n- Ontology terms grouped by role: focus nodes/classes, constrained property paths, and related terms.\n- Ontology information about all those terms, including property domains and ranges.\n- A data constraint written by the user: the primary constraint to encode as one logical unit.\n- Optional Astrea baseline shapes relevant to those terms. Treat them as structural evidence and a starting point: preserve compatible baseline constraints, refine or extend them with the data constraint, and never copy unrelated constraints. If baseline evidence conflicts with explicit ontology evidence or the data constraint, follow the ontology and constraint.\n- Optional domain context and generation guidance.\n- Prefixes in scope. Use ONLY these prefixes and do not redeclare them."
     },
     {
       "role": "system",
-      "content": "## Shape structure rules\n\n1. Treat the business rule as ONE logical constraint. Do not emit an independent shape merely because several ontology terms were resolved.\n\n2. Use each justified focus class as sh:targetClass on a sh:NodeShape. Put constraints for its property paths in sh:property blocks under that NodeShape. When several constrained paths share a focus class, keep them together.\n\n3. Related terms provide range, class, nested-node, or conditional context. Do not turn them into additional SHACL targets unless the business rule explicitly applies to them.\n\n4. Express cross-property dependencies with SHACL Core logical constraints when that faithfully captures the rule; otherwise use a grounded sh:sparql constraint on the appropriate NodeShape.\n\n5. If no focus class can be justified but a constrained property has an ontology domain, use that domain as sh:targetClass. Produce a standalone sh:PropertyShape only when the ontology evidence genuinely requires it.\n\n6. Use sh:class to require that a property's values are instances of an ontology class or range. Use sh:hasValue only when the rule requires one specific individual or literal value. NEVER use a class IRI as sh:hasValue merely because that class is the property's range.\n\n7. Encode cardinality literally: 'exactly N' means sh:minCount N and sh:maxCount N; 'at least N' means sh:minCount N without adding sh:maxCount; 'at most N' means sh:maxCount N without adding a positive sh:minCount, unless another explicit clause supplies the other bound.\n\n8. Use the `{shape_prefix}:` prefix for generated shape subjects. Include a human-readable sh:message and an appropriate sh:severity (default sh:Violation unless the rule or guidance says otherwise).\n\n9. Add ONLY constraints justified by the business rule, ontology evidence, or user guidance. Every IRI used as sh:path, sh:class, sh:targetClass or sh:node MUST be an ontology IRI listed in the supplied information, unless it is a standard sh:, xsd:, rdf:, rdfs: or owl: term. NEVER invent properties or classes.\n\n10. Respect the user's generation guidance over these defaults whenever they conflict, provided the result remains valid SHACL Turtle."
+      "content": "## Shape structure rules\n\n1. Treat the data constraint as ONE logical constraint. Do not emit an independent shape merely because several ontology terms were resolved.\n\n2. The constrained property paths in the role contract are the AUTHORITATIVE allowlist for sh:path. Every sh:path MUST use one of those exact IRIs. NEVER substitute another ontology property because its name or meaning appears similar. The broader ontology IRI catalog authorizes class, target and range references; it does not expand the sh:path allowlist.\n\n3. Use each justified focus class as sh:targetClass on a sh:NodeShape. Put constraints for its property paths in sh:property blocks under that NodeShape. When several constrained paths share a focus class, keep them together.\n\n4. Cover every allowlisted path that the data constraint explicitly governs. An optional property is still constrained: encode its stated sh:maxCount, datatype, class and node kind while omitting sh:minCount unless presence is required. Do not omit a clause merely because the property is optional.\n\n5. Related terms provide range, class, nested-node, or conditional context. Do not turn them into additional SHACL targets or sh:path values unless the role contract also lists them in that role.\n\n6. Express cross-property dependencies with SHACL Core logical constraints when that faithfully captures the constraint; otherwise use a grounded sh:sparql constraint on the appropriate NodeShape.\n\n7. If no focus class can be justified but a constrained property has an ontology domain, use that domain as sh:targetClass. Produce a standalone sh:PropertyShape only when the ontology evidence genuinely requires it.\n\n8. Preserve ontology range evidence. For object-property values constrained to a class, use sh:class and add sh:nodeKind sh:IRI when the rule requires an IRI. For literal values, use the justified sh:datatype or logical datatype alternatives. Use sh:hasValue only when the constraint requires one specific individual or literal value. NEVER use a class IRI as sh:hasValue merely because that class is the property's range.\n\n9. Encode cardinality literally: 'exactly N' means sh:minCount N and sh:maxCount N; 'at least N' means sh:minCount N without adding sh:maxCount; 'at most N' means sh:maxCount N without adding a positive sh:minCount, unless another explicit clause supplies the other bound.\n\n10. Use the `{shape_prefix}:` prefix for generated shape subjects. Include a human-readable sh:message and an appropriate sh:severity (default sh:Violation unless the constraint or guidance says otherwise).\n\n11. Add ONLY constraints justified by the data constraint, ontology evidence, or user guidance. Every IRI used as sh:path, sh:class, sh:targetClass or sh:node MUST be an ontology IRI listed in the supplied information, unless it is a standard sh:, xsd:, rdf:, rdfs: or owl: term. NEVER invent properties or classes.\n\n12. Before returning, silently check that every sh:path is allowlisted, no explicitly constrained path was omitted, every stated cardinality is present, and every class/datatype range required by the rule is encoded. Return only the Turtle, not this checklist.\n\n13. Respect the user's generation guidance over these defaults whenever they conflict, provided the result remains valid SHACL Turtle."
     },
     {
       "role": "user",
@@ -18,7 +18,7 @@
     },
     {
       "role": "user",
-      "content": "Output rules:\n1. If the evidence (ontology + business rule + context) is sufficient, return ONLY the SHACL shapes in valid Turtle (.ttl). No explanation, preamble, comments, markdown fences or extra text.\n2. If there is NOT enough information to justify any constraint, return exactly this string and nothing else: SHACL shapes not found"
+      "content": "Output rules:\n1. If the evidence (ontology + data constraint + context) is sufficient, return ONLY the SHACL shapes in valid Turtle (.ttl). No explanation, preamble, comments, markdown fences or extra text.\n2. If there is NOT enough information to justify any constraint, return exactly this string and nothing else: SHACL shapes not found"
     },
     {
       "role": "user",
@@ -34,7 +34,7 @@
     },
     {
       "role": "user",
-      "content": "--- BUSINESS RULE ---\n{rule}"
+      "content": "--- DATA CONSTRAINT ---\n{rule}"
     },
     {
       "role": "user",
@@ -56,11 +56,11 @@
     },
     {
       "role": "system",
-      "content": "Inputs: role-grouped ontology terms, ontology info, one business rule, optional rule-focused Astrea baseline shapes, optional domain context and generation guidance, prefixes in scope, the preferred generated-shape prefix, the previous invalid output, and the validation error. Keep the rule as one logical constraint document. Astrea is structural evidence; explicit ontology evidence and the business rule take precedence. Use ONLY prefixes in scope and the `{shape_prefix}:` prefix for shape subjects."
+      "content": "Inputs: role-grouped ontology terms, ontology info, one data constraint, optional constraint-focused Astrea baseline shapes, optional domain context and generation guidance, prefixes in scope, the preferred generated-shape prefix, the previous invalid output, and the validation error. Keep the data constraint as one logical constraint document. Astrea is structural evidence; explicit ontology evidence and the data constraint take precedence. Use ONLY prefixes in scope and the `{shape_prefix}:` prefix for shape subjects."
     },
     {
       "role": "system",
-      "content": "## Shape structure rules\n\n1. Generate one coherent constraint document for the business rule, not one shape per resolved term.\n2. Focus classes become sh:targetClass values on sh:NodeShape resources; constrained paths become sh:property blocks under the appropriate focus shape.\n3. Related terms are context and are not additional targets unless the rule explicitly applies to them.\n4. Keep multiple paths together when they participate in the same rule. Use SHACL Core for dependencies when possible and grounded sh:sparql otherwise.\n5. Use sh:class for class/range membership. Use sh:hasValue only for a specific individual or literal required by the rule; never substitute a property's range class as its sh:hasValue.\n6. Encode cardinality literally: 'exactly N' means sh:minCount N and sh:maxCount N; 'at least N' means sh:minCount N without adding sh:maxCount; 'at most N' means sh:maxCount N without adding a positive sh:minCount, unless another explicit clause supplies the other bound.\n7. Subjects use the `{shape_prefix}:` prefix. Include sh:message and sh:severity.\n8. Every IRI used as sh:path, sh:class, sh:targetClass or sh:node must be listed in the ontology information unless it is a standard sh:, xsd:, rdf:, rdfs: or owl: term. Never invent properties or classes.\n9. Add only constraints justified by the rule, ontology, or guidance."
+      "content": "## Shape structure rules\n\n1. Generate one coherent constraint document for the data constraint, not one shape per resolved term.\n2. The constrained property paths are the AUTHORITATIVE sh:path allowlist. Every sh:path must use one exact IRI from that list. Never substitute a semantically similar property from the broader ontology catalog.\n3. Focus classes become sh:targetClass values on sh:NodeShape resources; constrained paths become sh:property blocks under the appropriate focus shape.\n4. Cover every allowlisted path explicitly governed by the data constraint. Optional properties still require their stated sh:maxCount, datatype, class and node kind; optional means no positive sh:minCount unless presence is required.\n5. Related terms are range and logical context, not additional targets or paths unless listed in those roles.\n6. Keep multiple paths together when they participate in the same constraint. Use SHACL Core for dependencies when possible and grounded sh:sparql otherwise.\n7. Preserve ontology ranges: use sh:class for object-property class membership, sh:nodeKind sh:IRI when required, and sh:datatype or logical datatype alternatives for literals. Use sh:hasValue only for a specific individual or literal required by the constraint; never substitute a property's range class as its sh:hasValue.\n8. Encode cardinality literally: 'exactly N' means sh:minCount N and sh:maxCount N; 'at least N' means sh:minCount N without adding sh:maxCount; 'at most N' means sh:maxCount N without adding a positive sh:minCount, unless another explicit clause supplies the other bound.\n9. Subjects use the `{shape_prefix}:` prefix. Include sh:message and sh:severity.\n10. Every IRI used as sh:path, sh:class, sh:targetClass or sh:node must be listed in the ontology information unless it is a standard sh:, xsd:, rdf:, rdfs: or owl: term. Never invent properties or classes.\n11. Add only constraints justified by the data constraint, ontology, or guidance.\n12. Before returning, silently verify exact path use, path coverage, cardinalities and class/datatype ranges. Return only corrected Turtle."
     },
     {
       "role": "user",
@@ -84,7 +84,7 @@
     },
     {
       "role": "user",
-      "content": "--- BUSINESS RULE ---\n{rule}"
+      "content": "--- DATA CONSTRAINT ---\n{rule}"
     },
     {
       "role": "user",
@@ -105,6 +105,140 @@
     {
       "role": "user",
       "content": "--- VALIDATION ERROR ---\n{error}"
+    }
+  ],
+  "semantic_critic": [
+    {
+      "role": "system",
+      "content": "You are the semantic critic in an ontology-grounded SHACL authoring workflow. Audit a candidate SHACL document against the complete data constraint, resolved ontology roles and ontology evidence. Do not rewrite the SHACL. Return only the concise JSON audit contract requested below; do not reveal private reasoning or add markdown."
+    },
+    {
+      "role": "system",
+      "content": "Audit rules:\n1. Produce one clause entry for every constrained property path and any additional node-level normative sentence.\n2. Optional means absence is allowed, but stated maxCount, class, datatype and node-kind constraints still have to be represented.\n3. Check cardinalities literally: exactly N requires minCount N and maxCount N; at least N requires minCount N; at most N requires maxCount N.\n4. For an object property with a justified class range, require sh:class for that range and sh:nodeKind sh:IRI when the data constraint requires an IRI. Merely mentioning the class in sh:message is insufficient.\n5. For literal alternatives, check the actual SHACL expression. Ordinary non-language strings use xsd:string and language-tagged strings use rdf:langString. When the data constraint explicitly distinguishes these alternatives, rdf:PlainLiteral alone is not an equivalent replacement even if it appears as a broad ontology range.\n6. Check that every sh:path is an authorized constrained path and that related terms were not promoted to paths or targets.\n7. Check cross-property dependencies and all explicit value, datatype, class, pattern, range and cardinality requirements.\n8. Do not report stylistic preferences as blocking semantic issues unless generation guidance explicitly requires them."
+    },
+    {
+      "role": "system",
+      "content": "Return exactly one JSON object with this schema: {{\"status\":\"passed|needs_correction\",\"summary\":\"brief conclusion\",\"clauses\":[{{\"path\":\"prefixed IRI or (node-level)\",\"cardinality\":\"correct|incorrect|not_applicable\",\"value_constraint\":\"correct|incorrect|not_applicable\",\"issues\":[{{\"code\":\"UPPER_SNAKE_CASE\",\"message\":\"concise actionable finding\",\"path\":\"optional prefixed IRI\"}}]}}],\"issues\":[{{\"code\":\"UPPER_SNAKE_CASE\",\"message\":\"concise actionable finding\",\"path\":\"optional prefixed IRI\"}}]}}. Use empty issue arrays and status passed only when no semantic mismatch remains."
+    },
+    {
+      "role": "user",
+      "content": "--- PREFIXES IN SCOPE ---\n{prefixes}"
+    },
+    {
+      "role": "user",
+      "content": "--- RESOLVED ONTOLOGY ROLE CONTRACT ---\n{target_context}"
+    },
+    {
+      "role": "user",
+      "content": "--- ONTOLOGY EVIDENCE ---\n{ontology_info}"
+    },
+    {
+      "role": "user",
+      "content": "--- DOMAIN CONTEXT ---\n{domain_context}"
+    },
+    {
+      "role": "user",
+      "content": "--- DATA CONSTRAINT ---\n{rule}"
+    },
+    {
+      "role": "user",
+      "content": "--- GENERATION GUIDANCE ---\n{generation_guidance}"
+    },
+    {
+      "role": "user",
+      "content": "--- CANDIDATE SHACL TO AUDIT ---\n{candidate_shapes}"
+    }
+  ],
+  "semantic_critic_with_error": [
+    {
+      "role": "system",
+      "content": "You are the semantic critic for ontology-grounded SHACL. Your previous response violated the required JSON audit contract. Return only one valid JSON object with no markdown or surrounding text. Do not rewrite the SHACL and do not reveal private reasoning."
+    },
+    {
+      "role": "system",
+      "content": "Use exactly this schema: {{\"status\":\"passed|needs_correction\",\"summary\":\"brief conclusion\",\"clauses\":[{{\"path\":\"prefixed IRI or (node-level)\",\"cardinality\":\"correct|incorrect|not_applicable\",\"value_constraint\":\"correct|incorrect|not_applicable\",\"issues\":[{{\"code\":\"UPPER_SNAKE_CASE\",\"message\":\"concise actionable finding\",\"path\":\"optional prefixed IRI\"}}]}}],\"issues\":[{{\"code\":\"UPPER_SNAKE_CASE\",\"message\":\"concise actionable finding\",\"path\":\"optional prefixed IRI\"}}]}}. Audit every constrained path, cardinality, class/datatype, node kind and dependency."
+    },
+    {
+      "role": "user",
+      "content": "--- PREFIXES IN SCOPE ---\n{prefixes}"
+    },
+    {
+      "role": "user",
+      "content": "--- RESOLVED ONTOLOGY ROLE CONTRACT ---\n{target_context}"
+    },
+    {
+      "role": "user",
+      "content": "--- ONTOLOGY EVIDENCE ---\n{ontology_info}"
+    },
+    {
+      "role": "user",
+      "content": "--- DOMAIN CONTEXT ---\n{domain_context}"
+    },
+    {
+      "role": "user",
+      "content": "--- DATA CONSTRAINT ---\n{rule}"
+    },
+    {
+      "role": "user",
+      "content": "--- GENERATION GUIDANCE ---\n{generation_guidance}"
+    },
+    {
+      "role": "user",
+      "content": "--- CANDIDATE SHACL TO AUDIT ---\n{candidate_shapes}"
+    },
+    {
+      "role": "user",
+      "content": "--- PREVIOUS FORMAT ERROR ---\n{error}"
+    }
+  ],
+  "semantic_corrector": [
+    {
+      "role": "system",
+      "content": "You are the SHACL corrector in an ontology-grounded authoring workflow. Apply every actionable issue from the semantic critic or deterministic validator to the supplied candidate and return one complete corrected Turtle document. Preserve constraints that the audit did not reject."
+    },
+    {
+      "role": "system",
+      "content": "Correction rules:\n1. Use only authorized focus nodes, constrained paths and supplied ontology terms. Never invent or substitute an IRI.\n2. Keep all clauses of the data constraint in one coherent document. Optional constrained paths still require their stated maxCount and value constraints.\n3. Encode exact, minimum and maximum cardinalities literally.\n4. Encode object-property class ranges with sh:class and sh:nodeKind sh:IRI when required.\n5. Use xsd:string for ordinary strings and rdf:langString for language-tagged strings when the data constraint distinguishes them; do not substitute rdf:PlainLiteral.\n6. A message never replaces an executable SHACL constraint.\n7. Return only complete valid Turtle without markdown, comments, analysis or an audit report."
+    },
+    {
+      "role": "user",
+      "content": "--- PREFIXES IN SCOPE ---\n{prefixes}"
+    },
+    {
+      "role": "user",
+      "content": "--- PREFERRED SHAPE PREFIX ---\n{shape_prefix}"
+    },
+    {
+      "role": "user",
+      "content": "--- RESOLVED ONTOLOGY ROLE CONTRACT ---\n{target_context}"
+    },
+    {
+      "role": "user",
+      "content": "--- ONTOLOGY EVIDENCE ---\n{ontology_info}"
+    },
+    {
+      "role": "user",
+      "content": "--- DOMAIN CONTEXT ---\n{domain_context}"
+    },
+    {
+      "role": "user",
+      "content": "--- DATA CONSTRAINT ---\n{rule}"
+    },
+    {
+      "role": "user",
+      "content": "--- GENERATION GUIDANCE ---\n{generation_guidance}"
+    },
+    {
+      "role": "user",
+      "content": "--- ASTREA EVIDENCE ---\n{astrea_shapes}"
+    },
+    {
+      "role": "user",
+      "content": "--- CANDIDATE SHACL TO CORRECT ---\n{candidate_shapes}"
+    },
+    {
+      "role": "user",
+      "content": "--- ACTIONABLE AUDIT REPORT ---\n{audit_report}"
     }
   ]
 }

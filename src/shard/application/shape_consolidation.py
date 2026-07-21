@@ -94,7 +94,7 @@ def _merge_constraint_value(values, predicate, obj, logger):
 
     if predicate in {SH.datatype, SH["class"], SH.nodeKind, SH.severity, SH.node}:
         logger.warn(
-            f"[guide-rule] conflicting {predicate} values while consolidating; keeping the first."
+            f"[batch-rule] conflicting {predicate} values while consolidating; keeping the first."
         )
         return values
 
@@ -112,7 +112,7 @@ def _add_property_constraints(grouped, source_graph, bnode_graph, class_uri, pat
             and _bnode_has_shacl_predicate(source_graph, obj)
         ):
             logger.warn(
-                f"[guide-rule] dropping malformed blank-node value for {predicate}; "
+                f"[batch-rule] dropping malformed blank-node value for {predicate}; "
                 "SHACL constraint blank nodes are only kept for structural shape predicates."
             )
             continue

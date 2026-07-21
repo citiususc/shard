@@ -75,11 +75,10 @@ function wireExport(buttonId, getNodeShapes) {
       const result = await fetchJSON(SERVICES.merge, {
         method: "POST",
         body: JSON.stringify({
-          generated_shapes: generatedDocument,
-          generated_filename: "shard_shapes.ttl",
-          astrea_baseline: baseline,
-          technique,
-          validation_profiles: getShapeValidationProfiles(),
+          generated: { name: "shard_shapes.ttl", content: generatedDocument },
+          baseline: { name: baseline.name || "astrea.ttl", content: baseline.content },
+          merge_strategy: technique,
+          validation: apiValidationOptions(),
         }),
       }, { label: "Merge Astrea baseline", timeoutMs: 30000 });
       if (!result.valid) {
@@ -87,7 +86,8 @@ function wireExport(buttonId, getNodeShapes) {
       }
       const filename = `shard_shapes_${technique}.ttl`;
       downloadText(filename, result.shape_document, "text/turtle");
-      const warnings = Array.isArray(result.warnings) ? result.warnings.length : 0;
+      const warnings = result.merge && Array.isArray(result.merge.warnings)
+        ? result.merge.warnings.length : 0;
       setStatus(`Exported ${filename}${warnings ? ` · ${warnings} merge warning(s)` : ""}`);
     } catch (error) {
       const panel = byId("validation-panel");
@@ -103,6 +103,9 @@ function wireExport(buttonId, getNodeShapes) {
 }
 
 /* ---------- session import / export ---------- */
+const SESSION_EXAMPLES_MANIFEST = "examples/manifest.json";
+const PENDING_SESSION_WORKSPACE = "shard.pendingSessionWorkspace";
+
 function sanitizedModelsForExport() {
   const m = getModels();
   return {
@@ -114,7 +117,185 @@ function sanitizedModelsForExport() {
   };
 }
 
-function wireSessionControls() {
+function sessionHas(payload, key) {
+  return Object.prototype.hasOwnProperty.call(payload || {}, key);
+}
+
+function sessionWorkflowPage(workflow) {
+  if (workflow === "rule") return "rule.html";
+  if (workflow === "batch") return "batch.html";
+  return "";
+}
+
+function savePendingSessionWorkspace(workspace, sourceLabel) {
+  if (!workspace || typeof workspace !== "object") {
+    sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
+    return;
+  }
+  sessionStorage.setItem(PENDING_SESSION_WORKSPACE, JSON.stringify({
+    workspace,
+    sourceLabel: String(sourceLabel || "Imported session"),
+  }));
+}
+
+function restorePendingSessionWorkspace(options) {
+  const raw = sessionStorage.getItem(PENDING_SESSION_WORKSPACE);
+  if (!raw) return;
+  try {
+    const pending = JSON.parse(raw);
+    const workspace = pending && pending.workspace;
+    if (!workspace || workspace.workflow !== options.workflow) return;
+    if (typeof options.applyWorkspaceState === "function") {
+      options.applyWorkspaceState(workspace);
+    }
+    sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
+    setStatus(`${pending.sourceLabel || "Session"} imported`);
+  } catch (error) {
+    sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
+    setStatus(`Could not restore session workspace: ${error.message}`);
+  }
+}
+
+function importSessionPayload(payload, options = {}) {
+  if (!payload || payload.application !== "SHARD") {
+    throw new Error("The selected file is not a SHARD session.");
+  }
+  if (sessionHas(payload, "ontology")) {
+    if (payload.ontology) setOntology(payload.ontology);
+    else removeStoredValue(STORE.ontology);
+  }
+  if (sessionHas(payload, "accepted")) {
+    setAccepted(Array.isArray(payload.accepted) ? payload.accepted : []);
+  }
+  if (sessionHas(payload, "shapeValidationProfiles")) {
+    setShapeValidationProfiles(
+      Array.isArray(payload.shapeValidationProfiles) ? payload.shapeValidationProfiles : [],
+    );
+  }
+  if (sessionHas(payload, "astreaBaseline")) {
+    setAstreaBaseline(payload.astreaBaseline && payload.astreaBaseline.content
+      ? payload.astreaBaseline : null);
+  }
+  if (payload.astreaMergeTechnique) {
+    setAstreaMergeTechnique(payload.astreaMergeTechnique, { render: false });
+  }
+  if (payload.astreaUseMode) {
+    setAstreaUseMode(payload.astreaUseMode, { render: false });
+  } else if (payload.astreaMergeMode) {
+    setAstreaMergeMode(payload.astreaMergeMode);
+  }
+  if (payload.models) {
+    const current = getModels();
+    const pick = (key, fallback) => sessionHas(payload.models, key)
+      ? payload.models[key] : fallback;
+    saveJSON(STORE.models, mergeModels(current, {
+      provider: pick("provider", current.provider),
+      llmModel: pick("llmModel", current.llmModel),
+      embeddingModel: pick("embeddingModel", current.embeddingModel),
+      temperature: clampTemperature(pick("temperature", current.temperature)),
+      customModels: pick("customModels", current.customModels),
+    }));
+  }
+
+  const sourceLabel = options.sourceLabel || "Session";
+  savePendingSessionWorkspace(payload.workspace, sourceLabel);
+  const targetPage = sessionWorkflowPage(payload.workspace && payload.workspace.workflow);
+  if (targetPage && options.workflow && payload.workspace.workflow !== options.workflow) {
+    location.assign(targetPage);
+  } else {
+    location.reload();
+  }
+}
+
+function createSessionImportMenu(importBtn, importInput, options) {
+  const menu = document.createElement("div");
+  menu.className = "session-import-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", "Import a SHARD session");
+  menu.innerHTML = `
+    <button class="session-import-option" type="button" role="menuitem" data-session-file>
+      <span class="session-import-option-title">Import from file</span>
+      <span class="session-import-option-detail">Open a previously exported SHARD session</span>
+    </button>
+    <div class="session-import-separator" role="separator"></div>
+    <p class="session-import-heading">Preloaded examples</p>
+    <div class="session-example-list" data-session-examples>
+      <p class="session-import-loading">Loading examples...</p>
+    </div>`;
+  importBtn.closest(".session-toolbar").appendChild(menu);
+  importBtn.setAttribute("aria-haspopup", "menu");
+  importBtn.setAttribute("aria-expanded", "false");
+
+  const close = () => {
+    menu.hidden = true;
+    importBtn.setAttribute("aria-expanded", "false");
+  };
+  const toggle = () => {
+    menu.hidden = !menu.hidden;
+    importBtn.setAttribute("aria-expanded", String(!menu.hidden));
+  };
+  importBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggle();
+  });
+  menu.querySelector("[data-session-file]").addEventListener("click", () => {
+    close();
+    importInput.click();
+  });
+  menu.addEventListener("click", (event) => event.stopPropagation());
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  const manifestUrl = new URL(SESSION_EXAMPLES_MANIFEST, document.baseURI);
+  const list = menu.querySelector("[data-session-examples]");
+  fetch(manifestUrl)
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((manifest) => {
+      const examples = Array.isArray(manifest.examples) ? manifest.examples : [];
+      list.innerHTML = "";
+      examples.forEach((example) => {
+        const button = document.createElement("button");
+        button.className = "session-import-option session-example-option";
+        button.type = "button";
+        button.setAttribute("role", "menuitem");
+        button.innerHTML = `
+          <span class="session-import-option-title">${esc(example.title || example.id)}</span>
+          <span class="session-import-option-detail">${esc(example.description || "")}</span>`;
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          setStatus(`Loading ${example.title || "example"}...`);
+          try {
+            const sessionUrl = new URL(example.session, manifestUrl);
+            const response = await fetch(sessionUrl);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            importSessionPayload(payload, {
+              workflow: options.workflow,
+              sourceLabel: example.title || "Example session",
+            });
+          } catch (error) {
+            button.disabled = false;
+            setStatus(`Could not load example: ${error.message}`);
+          }
+        });
+        list.appendChild(button);
+      });
+      if (!examples.length) {
+        list.innerHTML = '<p class="session-import-loading">No examples available.</p>';
+      }
+    })
+    .catch((error) => {
+      list.innerHTML = `<p class="session-import-error">Examples unavailable: ${esc(error.message)}</p>`;
+    });
+}
+
+function wireSessionControls(options = {}) {
   const exportBtn = byId("export-session");
   const importBtn = byId("import-session");
   const importInput = byId("session-file");
@@ -122,7 +303,7 @@ function wireSessionControls() {
   if (exportBtn) exportBtn.addEventListener("click", async () => {
     const payload = {
       application: "SHARD",
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       ontology: getOntology(),
       accepted: getAccepted(),
@@ -131,6 +312,8 @@ function wireSessionControls() {
       astreaUseMode: getAstreaUseMode(),
       astreaMergeTechnique: getAstreaMergeTechnique(),
       models: sanitizedModelsForExport(),
+      workspace: typeof options.getWorkspaceState === "function"
+        ? options.getWorkspaceState() : null,
     };
     try {
       const result = await saveTextAsFile(
@@ -153,40 +336,16 @@ function wireSessionControls() {
   });
 
   if (importBtn && importInput) {
-    importBtn.addEventListener("click", () => importInput.click());
+    createSessionImportMenu(importBtn, importInput, options);
     importInput.addEventListener("change", async (ev) => {
       const file = ev.target.files && ev.target.files[0];
       if (!file) return;
       try {
         const payload = JSON.parse(await file.text());
-        if (payload.ontology) setOntology(payload.ontology);
-        if (Array.isArray(payload.accepted)) setAccepted(payload.accepted);
-        if (Array.isArray(payload.shapeValidationProfiles)) {
-          setShapeValidationProfiles(payload.shapeValidationProfiles);
-        }
-        if (payload.astreaBaseline && payload.astreaBaseline.content) {
-          setAstreaBaseline(payload.astreaBaseline);
-        }
-        if (payload.astreaMergeTechnique) {
-          setAstreaMergeTechnique(payload.astreaMergeTechnique, { render: false });
-        }
-        if (payload.astreaUseMode) {
-          setAstreaUseMode(payload.astreaUseMode, { render: false });
-        } else if (payload.astreaMergeMode) {
-          setAstreaMergeMode(payload.astreaMergeMode);
-        }
-        if (payload.models) {
-          const current = getModels();
-          saveJSON(STORE.models, mergeModels(current, {
-            provider: payload.models.provider || current.provider,
-            llmModel: payload.models.llmModel || current.llmModel,
-            embeddingModel: payload.models.embeddingModel || current.embeddingModel,
-            temperature: clampTemperature(payload.models.temperature),
-            customModels: payload.models.customModels || current.customModels,
-          }));
-        }
-        setStatus("Session imported");
-        location.reload();
+        importSessionPayload(payload, {
+          workflow: options.workflow,
+          sourceLabel: file.name,
+        });
       } catch (e) {
         setStatus(`Could not import session: ${e.message}`);
       } finally {
@@ -194,6 +353,8 @@ function wireSessionControls() {
       }
     });
   }
+
+  restorePendingSessionWorkspace(options);
 }
 
 /* ---------- copy / validate ---------- */
@@ -206,9 +367,9 @@ async function validateTurtle(shape, prefixes) {
   return fetchJSON(SERVICES.validate, {
     method: "POST",
     body: JSON.stringify({
-      shape,
+      shape_document: shape,
       prefixes,
-      validation_profiles: getShapeValidationProfiles(),
+      validation: apiValidationOptions(),
     }),
   }, { label: "Validate Turtle", timeoutMs: 30000 }); // {valid, error}
 }
@@ -218,7 +379,7 @@ function wireReset(buttonId) {
   const btn = byId(buttonId);
   if (!btn) return;
   btn.addEventListener("click", async () => {
-    if (!confirm("Clear the loaded ontology and accepted shapes?")) return;
+    if (!confirm("Clear the entire workspace? This removes the ontology, accepted shapes, validation profiles, Astrea settings, and current work.")) return;
     const o = getOntology();
     if (o) {
       await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding || {
@@ -228,13 +389,13 @@ function wireReset(buttonId) {
         inferenceConfig: getInferenceConfig(),
       });
     }
-    localStorage.removeItem(STORE.ontology);
-    localStorage.removeItem(STORE.accepted);
-    localStorage.removeItem(STORE.shapeProfiles);
-    localStorage.removeItem(STORE.astreaBaseline);
-    localStorage.removeItem(STORE.astreaUseMode);
-    localStorage.removeItem(STORE.astreaMergeTechnique);
-    localStorage.removeItem(STORE.astreaMergeMode);
+    removeStoredValue(STORE.ontology);
+    removeStoredValue(STORE.accepted);
+    removeStoredValue(STORE.shapeProfiles);
+    removeStoredValue(STORE.astreaBaseline);
+    removeStoredValue(STORE.astreaUseMode);
+    removeStoredValue(STORE.astreaMergeTechnique);
+    removeStoredValue(STORE.astreaMergeMode);
     location.reload();
   });
 }

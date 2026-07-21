@@ -38,15 +38,15 @@ ex:assetIdentifier a owl:DatatypeProperty ;
 
 RULE = "Every Asset must have exactly one asset identifier."
 
-GUIDE = """\
-# Business Rules
+BATCH = """\
+# Data Constraints
 
 ## Rule
 
 - Number: BR-API-001
 - Title: Asset identifier
 
-### Business rule
+### Data constraint
 
 Every Asset must have exactly one asset identifier.
 """
@@ -145,7 +145,7 @@ class ApiClient:
                         continue
                     event = json.loads(line[5:].strip())
                     events.append(event)
-                    if event.get("type") in {"done", "error"}:
+                    if event.get("event") in {"completed", "failed"}:
                         break
         except urllib.error.HTTPError as exc:
             self._raise_http_error(exc)
@@ -215,50 +215,55 @@ def basic_endpoint_checks(client: ApiClient) -> None:
 
     docs = client.get_html("docs")
     check("SwaggerUIBundle" in docs, "GET /api/v1/docs")
+    redoc = client.get_html("redoc")
+    check("Redoc.init" in redoc, "GET /api/v1/redoc")
 
     parsed = client.post_json(
         "ontology/parse",
-        {"filename": "inline-ontology.ttl", "content": ONTOLOGY},
+        {"ontology": {"filename": "inline-ontology.ttl", "content": ONTOLOGY}},
     )
     terms = parsed.get("entities") or []
     check(len(terms) == 2, "POST /api/v1/ontology/parse")
 
     ranking = client.post_json(
         "ontology/search",
-        {"business_rule": RULE, "ontology_terms": terms, "top_k": 5},
+        {
+            "rule": {"number": "BR-API-001", "title": "Asset identifier", "text": RULE},
+            "ontology_terms": terms,
+            "top_k": 5,
+        },
     )
     check("method" in ranking, "POST /api/v1/ontology/search")
 
-    for endpoint in ("ontology/index", "ontology/index/status", "ontology/index/cancel"):
-        result = client.post_json(endpoint, {"ontology_terms": []})
-        check("status" in result, f"POST /api/v1/{endpoint}")
+    index = client.post_json("ontology/indexes", {"ontology_terms": []})
+    check("job_id" in index, "POST /api/v1/ontology/indexes returns 202 job")
+    index = client.get_json(f"ontology/indexes/{index['job_id']}")
+    check("status" in index, "GET /api/v1/ontology/indexes/{job_id}")
 
     resolution = client.post_json(
         "rules/resolve-targets",
         {
-            "ontology_filename": "inline-ontology.ttl",
-            "ontology_content": ONTOLOGY,
-            "business_rule": RULE,
-            "rule_number": "BR-API-001",
-            "rule_title": "Asset identifier",
-            "resolver_llm_fallback": False,
+            "input_type": "rule",
+            "ontology": {"filename": "inline-ontology.ttl", "content": ONTOLOGY},
+            "rule": {"number": "BR-API-001", "title": "Asset identifier", "text": RULE},
+            "resolver": {"llm_fallback": False},
         },
     )
     row = (resolution.get("rules") or [{}])[0]
     check(row.get("resolved_by") == "label", "POST /api/v1/rules/resolve-targets")
 
-    validation = client.post_json("shapes/validate", {"shape": GENERATED_SHAPE})
+    validation = client.post_json("shapes/validate", {"shape_document": GENERATED_SHAPE})
     check(validation.get("valid") is True, "POST /api/v1/shapes/validate")
 
     merged = client.post_json(
         "shapes/merge",
         {
-            "generated_shapes": GENERATED_SHAPE,
-            "astrea_baseline": {
+            "generated": {"name": "generated.ttl", "content": GENERATED_SHAPE},
+            "baseline": {
                 "name": "inline-astrea.ttl",
                 "content": BASELINE_SHAPE,
             },
-            "technique": "priority-llm",
+            "merge_strategy": "generated-priority",
         },
     )
     check(merged.get("valid") is True, "POST /api/v1/shapes/merge")
@@ -271,30 +276,31 @@ def inference_endpoint_checks(client: ApiClient) -> None:
 
     parsed = client.post_json(
         "ontology/parse",
-        {"filename": "inline-ontology.ttl", "content": ONTOLOGY},
+        {"ontology": {"filename": "inline-ontology.ttl", "content": ONTOLOGY}},
     )
     terms = parsed.get("entities") or []
     ontology_hash = hashlib.sha256(ONTOLOGY.encode("utf-8")).hexdigest()
     index_payload = {
         "ontology_terms": terms,
         "ontology_hash": ontology_hash,
-        "embedding_model": inference["embedding_model"],
-        "inference_config": inference,
+        "inference": inference,
     }
-    index = client.post_json("ontology/index", index_payload)
+    index = client.post_json("ontology/indexes", index_payload)
     deadline = time.monotonic() + client.timeout
-    while index.get("status") in {"preparing", "cancelling"}:
+    while index.get("status") in {"queued", "running"}:
         if time.monotonic() >= deadline:
             raise RuntimeError("Ontology embedding preparation timed out.")
         time.sleep(1)
-        index = client.post_json("ontology/index/status", index_payload)
-    check(index.get("status") == "ready", "semantic ontology index is ready")
+        index = client.get_json(f"ontology/indexes/{index['job_id']}")
+    check(index.get("status") == "completed", "semantic ontology index is ready")
 
     ranking = client.post_json(
         "ontology/search",
         {
-            **index_payload,
-            "business_rule": RULE,
+            "ontology_terms": terms,
+            "ontology_hash": ontology_hash,
+            "rule": {"number": "BR-API-001", "title": "Asset identifier", "text": RULE},
+            "inference": inference,
             "top_k": 5,
         },
     )
@@ -306,27 +312,23 @@ def inference_endpoint_checks(client: ApiClient) -> None:
     model_result = client.post_json(
         "models/check",
         {
-            "provider": "databricks",
-            "model": model,
+            "inference_provider": "databricks",
+            "model_id": model,
             "role": "chat",
-            "inference_config": inference,
         },
     )
     check(model_result.get("ok") is True, "POST /api/v1/models/check")
 
     build_payload = {
-        "business_rule": RULE,
-        "ontology_filename": "inline-ontology.ttl",
-        "ontology_content": ONTOLOGY,
+        "rule": {"number": "BR-API-001", "title": "Asset identifier", "text": RULE},
+        "ontology": {"filename": "inline-ontology.ttl", "content": ONTOLOGY},
         "target_roles": {
-            "focus_nodes": ["http://example.org/assets#Asset"],
-            "constraint_paths": ["http://example.org/assets#assetIdentifier"],
+            "focus_nodes": [{"iri": "http://example.org/assets#Asset", "label": "Asset"}],
+            "constraint_paths": [{"iri": "http://example.org/assets#assetIdentifier", "label": "asset identifier"}],
             "related_terms": [],
         },
-        "model": model,
-        "temperature": 0.0,
-        "inference_config": inference,
-        "astrea_use_mode": "none",
+        "inference": inference,
+        "astrea": {"mode": "none"},
     }
     built = client.post_json("shapes/build", build_payload)
     check(built.get("valid") is True, "POST /api/v1/shapes/build")
@@ -349,42 +351,30 @@ def inference_endpoint_checks(client: ApiClient) -> None:
         "POST /api/v1/workflows/rule-to-shape",
     )
 
-    guide_payload = {
+    batch_payload = {
         "ontology": {"filename": "inline-ontology.ttl", "content": ONTOLOGY},
-        "guide": {"filename": "inline-rules.md", "content": GUIDE},
+        "batch": {"filename": "inline-rules.md", "content": BATCH},
         "inference": inference,
         "resolver": {"llm_fallback": True, "wait_embeddings": False},
         "astrea": {"mode": "none"},
     }
-    guide_workflow = client.post_json("workflows/guide-to-shapes", guide_payload)
+    batch_workflow = client.post_json("workflows/batch-to-shapes", batch_payload)
     check(
-        guide_workflow.get("workflow") == "guide-to-shapes"
-        and bool(guide_workflow.get("final_shape_document")),
-        "POST /api/v1/workflows/guide-to-shapes",
+        batch_workflow.get("workflow") == "batch-to-shapes"
+        and bool(batch_workflow.get("final_shape_document")),
+        "POST /api/v1/workflows/batch-to-shapes",
     )
 
-    stream_payload = {
-        "ontology_filename": "inline-ontology.ttl",
-        "ontology_content": ONTOLOGY,
-        "guide_filename": "inline-rules.md",
-        "guide_content": GUIDE,
-        "llm_model": model,
-        "embedding_model": inference["embedding_model"],
-        "temperature": 0.0,
-        "resolver_llm_fallback": True,
-        "wait_embeddings": False,
-        "astrea_use_mode": "none",
-        "inference_config": inference,
-    }
-    events = client.post_sse("guides/generate", stream_payload)
-    check(events and events[-1].get("type") == "done", "POST /api/v1/guides/generate (SSE)")
+    stream_payload = batch_payload
+    events = client.post_sse("batches/generate", stream_payload)
+    check(events and events[-1].get("event") == "completed", "POST /api/v1/batches/generate (SSE)")
 
 
 def astrea_endpoint_check(client: ApiClient) -> None:
     """Check the optional external Astrea integration endpoint."""
     result = client.post_json(
         "baselines/astrea",
-        {"ontology_filename": "inline-ontology.ttl", "ontology_content": ONTOLOGY},
+        {"ontology": {"filename": "inline-ontology.ttl", "content": ONTOLOGY}},
     )
     check(result.get("available") is True, "POST /api/v1/baselines/astrea")
 

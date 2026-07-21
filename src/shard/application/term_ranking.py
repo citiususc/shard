@@ -1,4 +1,4 @@
-"""Rank ontology entities by relevance to a business rule.
+"""Rank ontology entities by relevance to a data constraint.
 
 Upgraded from the dummy lexical matcher to semantic ranking using the real
 SHARD inference facade. Because the
@@ -16,6 +16,8 @@ import os
 import re
 import threading
 import uuid
+from shard.domain.limits import MAX_TOP_K
+
 TOP_K = 8
 
 # Cache key: (embedding model, config fingerprint, ontology content hash, entity fingerprint).
@@ -439,7 +441,7 @@ def rank_terms(payload):
                 "message": disabled_message}
     allowed_types = set(payload.get("entity_types") or [])
     try:
-        top_k = max(1, min(100, int(payload.get("top_k", TOP_K))))
+        top_k = max(1, min(MAX_TOP_K, int(payload.get("top_k", TOP_K))))
     except (TypeError, ValueError):
         top_k = TOP_K
     try:
@@ -464,4 +466,3 @@ def rank_terms(payload):
         )
         return {"candidates": candidates, "method": "lexical",
                 "message": f"Embeddings unavailable ({exc}); used lexical fallback."}
-

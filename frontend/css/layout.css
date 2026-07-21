@@ -86,7 +86,7 @@ body.landing-page .hero {
   }
 
   body.rule-page,
-  body.guide-page {
+  body.batch-page {
     --rule-context-textarea-height: clamp(70px, 5.8vh, 84px);
     --rule-business-textarea-height: clamp(210px, 17.4vh, 252px);
     --matched-generation-block-height: clamp(226px, 21vh, 256px);
@@ -94,11 +94,11 @@ body.landing-page .hero {
   }
 
   body.rule-page .editor-column,
-  body.guide-page .editor-column {
-    grid-template-rows: minmax(170px, 0.42fr) minmax(252px, 0.68fr) minmax(0, 1.4fr) minmax(78px, auto);
+  body.batch-page .editor-column {
+    grid-template-rows: minmax(145px, 0.3fr) minmax(190px, 0.42fr) minmax(290px, 1fr) 220px;
   }
 
-  body.guide-page .evidence-column {
+  body.batch-page .evidence-column {
     grid-template-rows: var(--matched-generation-block-height) var(--matched-shape-profile-block-height) auto minmax(0, 1fr);
   }
 
@@ -150,15 +150,6 @@ body.landing-page .hero {
     font-size: 0.8rem;
   }
 
-  body.app-page .generation-controls .secondary-button {
-    width: auto;
-    height: 28px;
-    min-height: 28px;
-    max-height: 28px;
-    padding: 0 9px;
-    font-size: 0.72rem;
-  }
-
   body.app-page .session-actions {
     margin-top: 8px;
     gap: 6px;
@@ -186,7 +177,7 @@ body.landing-page .hero {
   body.app-page .textarea.large { height: 88px; }
 
   body.rule-page .generation-context-block .textarea,
-  body.guide-page .generation-context-block .textarea,
+  body.batch-page .generation-context-block .textarea,
   body.rule-page .business-rule-block .textarea,
   body.rule-page .selected-target-block .textarea {
     flex: 1 1 auto;
@@ -194,7 +185,7 @@ body.landing-page .hero {
   }
 
   body.rule-page .generation-context-block .textarea,
-  body.guide-page .generation-context-block .textarea {
+  body.batch-page .generation-context-block .textarea {
     flex: 0 0 var(--rule-context-textarea-height);
     height: var(--rule-context-textarea-height);
     min-height: var(--rule-context-textarea-height);
@@ -209,40 +200,40 @@ body.landing-page .hero {
   }
 
   body.rule-page .generation-context-block,
-  body.guide-page .generation-context-block {
+  body.batch-page .generation-context-block {
     height: var(--matched-generation-block-height);
     min-height: var(--matched-generation-block-height);
     max-height: var(--matched-generation-block-height);
   }
 
   body.rule-page .shape-profile-block,
-  body.guide-page .shape-profile-block {
+  body.batch-page .shape-profile-block {
     height: var(--matched-shape-profile-block-height);
     min-height: var(--matched-shape-profile-block-height);
     max-height: var(--matched-shape-profile-block-height);
   }
 
-  body.guide-page .current-business-rule-block .textarea {
+  body.batch-page .current-business-rule-block .textarea {
     flex: 1 1 auto;
     height: auto;
     min-height: 0;
     resize: none;
   }
 
-  body.guide-page .generated-shapes-block .queue-list {
+  body.batch-page .generated-shapes-block .queue-list {
     flex: 1 1 auto;
     min-height: 0;
     max-height: calc((var(--queue-card-height) * 5) + (8px * 4) + 8px);
   }
 
   body.rule-page .shape-profile-block .microcopy,
-  body.guide-page .shape-profile-block .microcopy {
+  body.batch-page .shape-profile-block .microcopy {
     flex: 0 0 auto;
     margin: 4px 0 0;
   }
 
   body.rule-page .shape-profile-block .profile-file-drop,
-  body.guide-page .shape-profile-block .profile-file-drop {
+  body.batch-page .shape-profile-block .profile-file-drop {
     flex: 0 0 42px;
     min-height: 42px;
     margin-top: 7px;
@@ -254,27 +245,27 @@ body.landing-page .hero {
 
   body.rule-page .shape-profile-block .profile-file-drop span,
   body.rule-page .shape-profile-block .profile-file-drop small,
-  body.guide-page .shape-profile-block .profile-file-drop span,
-  body.guide-page .shape-profile-block .profile-file-drop small {
+  body.batch-page .shape-profile-block .profile-file-drop span,
+  body.batch-page .shape-profile-block .profile-file-drop small {
     white-space: nowrap;
   }
 
   body.rule-page .shape-profile-block .profile-file-drop span,
-  body.guide-page .shape-profile-block .profile-file-drop span {
+  body.batch-page .shape-profile-block .profile-file-drop span {
     color: var(--muted);
     font-size: 0.82rem;
     font-weight: 750;
   }
 
   body.rule-page .shape-profile-block .profile-file-drop small,
-  body.guide-page .shape-profile-block .profile-file-drop small {
+  body.batch-page .shape-profile-block .profile-file-drop small {
     color: var(--muted);
     font-size: 0.72rem;
     font-weight: 600;
   }
 
   body.rule-page .profile-file-list,
-  body.guide-page .profile-file-list {
+  body.batch-page .profile-file-list {
     display: grid;
     flex: 1 1 auto;
     gap: 6px;
@@ -284,12 +275,12 @@ body.landing-page .hero {
   }
 
   body.rule-page .profile-file-list .microcopy,
-  body.guide-page .profile-file-list .microcopy {
+  body.batch-page .profile-file-list .microcopy {
     margin: 0;
   }
 
   body.rule-page .profile-file-item,
-  body.guide-page .profile-file-item {
+  body.batch-page .profile-file-item {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
@@ -305,20 +296,20 @@ body.landing-page .hero {
   }
 
   body.rule-page .profile-file-item code,
-  body.guide-page .profile-file-item code {
+  body.batch-page .profile-file-item code {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   body.rule-page .profile-file-item span,
-  body.guide-page .profile-file-item span {
+  body.batch-page .profile-file-item span {
     color: var(--muted);
     flex: 0 0 auto;
   }
 
   body.rule-page .profile-file-remove,
-  body.guide-page .profile-file-remove {
+  body.batch-page .profile-file-remove {
     display: grid;
     place-items: center;
     width: 22px;
@@ -336,7 +327,7 @@ body.landing-page .hero {
   }
 
   body.rule-page .profile-file-remove:hover,
-  body.guide-page .profile-file-remove:hover {
+  body.batch-page .profile-file-remove:hover {
     border-color: var(--err);
     color: var(--err);
     background: var(--err-soft);
@@ -402,6 +393,51 @@ body.landing-page .hero {
   body.app-page .ontology-search-row {
     margin-top: 8px;
     gap: 6px;
+  }
+
+  body.rule-page .ontology-search-block .section-title {
+    min-height: 28px;
+  }
+
+  body.rule-page .ontology-search-block .entity-filter-switch {
+    flex-basis: min(286px, 42%);
+    min-width: 238px;
+    min-height: 28px;
+    height: 28px;
+  }
+
+  body.rule-page .ontology-search-block .entity-filter-switch .switch-button {
+    display: grid;
+    place-items: center;
+    min-height: 28px;
+    height: 28px;
+    padding: 0 8px;
+    font-size: 0.72rem;
+    line-height: 1;
+  }
+
+  body.rule-page .ontology-search-block .ontology-search-row {
+    margin-top: 5px;
+    gap: 4px;
+  }
+
+  body.rule-page .ontology-search-block .ontology-search-row .input,
+  body.rule-page .ontology-search-block .ontology-search-row button {
+    height: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    padding: 0 8px;
+    font-size: 0.72rem;
+  }
+
+  body.rule-page .ontology-search-block #ontology-search-status {
+    margin-top: 3px;
+    font-size: 0.68rem;
+    line-height: 1.15;
+  }
+
+  body.rule-page .ontology-search-block .entity-list {
+    margin-top: 5px;
   }
 
   body.app-page .entity-list,
@@ -480,17 +516,13 @@ body.landing-page .hero {
     font-size: 0.64rem;
   }
 
-  body.app-page .editor-actions {
-    margin-top: 8px;
-  }
-
   body.app-page .validation-panel {
-    margin-top: 8px;
-    padding: 9px;
+    margin-top: 6px;
+    padding: 6px 9px;
     max-height: 76px;
     overflow: auto;
     font-size: 0.8rem;
-    line-height: 1.32;
+    line-height: 1.25;
   }
 
   body.app-page .accepted-item {
@@ -501,11 +533,12 @@ body.landing-page .hero {
   }
 
   body.app-page .accepted-list {
-    flex: 1 1 auto;
+    flex: 0 0 92px;
+    height: 92px;
     grid-auto-rows: 28px;
     align-content: start;
     gap: 4px;
-    max-height: none !important;
+    max-height: 92px !important;
     overflow-y: auto;
     padding-right: 4px;
     scrollbar-gutter: stable;
@@ -580,20 +613,20 @@ body.landing-page .hero {
   }
 
   body.rule-page .editor-column,
-  body.guide-page .editor-column {
-    grid-template-rows: minmax(135px, 0.34fr) minmax(242px, 0.68fr) minmax(0, 1.48fr) minmax(68px, auto);
+  body.batch-page .editor-column {
+    grid-template-rows: 132px 190px minmax(290px, 1fr) 220px;
   }
 
   body.rule-page .evidence-column {
     grid-template-rows: var(--matched-generation-block-height) var(--matched-shape-profile-block-height) auto auto;
   }
 
-  body.guide-page .evidence-column {
+  body.batch-page .evidence-column {
     grid-template-rows: var(--matched-generation-block-height) var(--matched-shape-profile-block-height) auto minmax(0, 1fr);
   }
 
   body.rule-page,
-  body.guide-page {
+  body.batch-page {
     --rule-context-textarea-height: 66px;
     --rule-business-textarea-height: 198px;
     --matched-generation-block-height: 206px;
@@ -601,8 +634,8 @@ body.landing-page .hero {
   }
 
   body.rule-page .entity-filter-switch {
-    flex-basis: min(300px, 46%);
-    min-width: 250px;
+    flex-basis: min(286px, 44%);
+    min-width: 238px;
   }
 
   body.rule-page .ontology-search-block .entity-list {
@@ -822,6 +855,7 @@ body.landing-page .hero {
     --rail-note-height: 58px;
     --rail-custom-padding: 8px;
     --rail-ontology-gap: 4px;
+    --rail-namespace-gap: 9px;
     --rail-ontology-note-height: 22px;
     --rail-section-gap: clamp(24px, 2.8vh, 40px);
     overflow-x: hidden;
@@ -883,7 +917,9 @@ body.landing-page .hero {
   }
 
   body.app-page .rail #base-namespace,
-  body.app-page .rail #shape-namespace {
+  body.app-page .rail #ontology-prefix,
+  body.app-page .rail #shape-namespace,
+  body.app-page .rail #shape-prefix {
     padding-right: 7px !important;
     padding-left: 7px !important;
     font-size: 0.78rem !important;
@@ -963,6 +999,49 @@ body.landing-page .hero {
     font-size: 0.6rem;
   }
 
+  body.app-page .rail .namespace-mini-panels {
+    flex: 0 0 auto;
+    width: var(--rail-control-width);
+    gap: var(--rail-namespace-gap);
+    margin-top: var(--rail-namespace-gap);
+  }
+
+  body.app-page .rail .namespace-mini-panel {
+    padding-top: 6px;
+  }
+
+  body.app-page .rail .namespace-mini-panel:first-child {
+    padding-top: 12px;
+  }
+
+  body.app-page .rail .namespace-mini-title {
+    height: var(--rail-label-height);
+  }
+
+  body.app-page .rail .namespace-mini-title h3 {
+    font-size: var(--rail-label-size);
+    line-height: var(--rail-label-height);
+  }
+
+  body.app-page .rail .namespace-input-row {
+    grid-template-columns: minmax(0, 1fr) 66px;
+    gap: var(--rail-control-gap);
+    margin-top: 3px;
+  }
+
+  body.app-page .rail .namespace-input-row label > span {
+    height: 9px;
+    margin-bottom: 2px;
+    font-size: 0.55rem;
+    line-height: 9px;
+  }
+
+  body.app-page .rail .namespace-input-row .input {
+    height: 30px !important;
+    min-height: 30px !important;
+    max-height: 30px !important;
+  }
+
   body.app-page .rail .microcopy {
     flex: 0 0 var(--rail-note-height);
     width: var(--rail-control-width) !important;
@@ -991,11 +1070,29 @@ body.landing-page .hero {
 
   body.app-page .rail .session-actions {
     display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto !important;
     gap: var(--rail-control-gap) !important;
     width: var(--rail-control-width) !important;
     height: var(--rail-control-height) !important;
     margin: var(--rail-control-gap) 0 0 !important;
+  }
+
+  body.app-page .rail .session-toolbar {
+    flex: 0 0 auto;
+    width: var(--rail-control-width);
+    margin: 0 0 12px;
+    padding: 0 0 10px;
+  }
+
+  body.app-page .rail .session-toolbar .session-actions {
+    margin-top: 0 !important;
+  }
+
+  body.app-page .rail .session-toolbar .session-note {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin-top: 5px !important;
   }
 
   body.app-page .rail > .session-actions {
@@ -1162,6 +1259,7 @@ body.landing-page .hero {
     --rail-note-height: 52px;
     --rail-custom-padding: 7px;
     --rail-ontology-gap: 3px;
+    --rail-namespace-gap: 9px;
     --rail-ontology-note-height: 18px;
     --rail-section-gap: 22px;
   }

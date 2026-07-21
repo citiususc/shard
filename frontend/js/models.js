@@ -68,6 +68,7 @@ function defaultModels(provider) {
     llmModel: "",
     embeddingModel: "",
     temperature: DEFAULT_TEMPERATURE,
+    databricks: { baseUrl: "", token: "" },
     huggingface: { token: "" },
     customModels: emptyCustomModels(),
   };
@@ -103,6 +104,10 @@ function getModels() {
     llmModel:       pick("llmModel"),
     embeddingModel: pick("embeddingModel"),
     temperature: clampTemperature(stored && stored.temperature),
+    databricks: {
+      baseUrl: (stored && stored.databricks && stored.databricks.baseUrl) || "",
+      token: (stored && stored.databricks && stored.databricks.token) || "",
+    },
     huggingface: {
       token: (stored && stored.huggingface && stored.huggingface.token) || "",
     },
@@ -114,6 +119,7 @@ function mergeModels(base, patch) {
   return {
     ...base,
     ...patch,
+    databricks: { ...(base.databricks || {}), ...(patch.databricks || {}) },
     huggingface: { ...(base.huggingface || {}), ...(patch.huggingface || {}) },
     customModels: patch.customModels ? normaliseCustomModels(patch.customModels) : base.customModels,
   };
@@ -147,7 +153,15 @@ function getInferenceConfig() {
     provider: m.provider,
     temperature: m.temperature,
   };
-  if (m.provider === "huggingface" && m.huggingface.token) {
+  const browserCredentialsEnabled = deploymentCapabilities.deployment_profile !== "public";
+  if (browserCredentialsEnabled && m.provider === "databricks"
+      && (m.databricks.baseUrl || m.databricks.token)) {
+    config.databricks = {
+      base_url: String(m.databricks.baseUrl || "").trim().replace(/\/$/, ""),
+      token: String(m.databricks.token || "").trim(),
+    };
+  }
+  if (browserCredentialsEnabled && m.provider === "huggingface" && m.huggingface.token) {
     config.huggingface = { token: m.huggingface.token };
   }
   return config;
@@ -173,6 +187,14 @@ function semanticSettingsStatus(models = getModels()) {
       message: "Semantic ranking disabled until model settings are configured.",
     };
   }
+  if (deploymentCapabilities.deployment_profile !== "public"
+      && models.provider === "databricks"
+      && (!models.databricks.baseUrl || !models.databricks.token)) {
+    return {
+      ready: false,
+      message: "Semantic ranking requires the Databricks base URL and token.",
+    };
+  }
   if (models.provider === "huggingface"
       && LOCAL_MODEL_AVAILABILITY.embeddingModel !== "ready") {
     return {
@@ -195,6 +217,14 @@ function generationSettingsStatus(models = getModels()) {
     return {
       ready: false,
       message: "Generation disabled until a model is selected.",
+    };
+  }
+  if (deploymentCapabilities.deployment_profile !== "public"
+      && models.provider === "databricks"
+      && (!models.databricks.baseUrl || !models.databricks.token)) {
+    return {
+      ready: false,
+      message: "Configure the Databricks base URL and token first.",
     };
   }
   if (models.provider === "huggingface"
@@ -234,10 +264,10 @@ async function validateSelectedModels(roleKeys) {
     const data = await fetchJSON(SERVICES.validateModel, {
       method: "POST",
       body: JSON.stringify({
-        provider: models.provider,
+        inference_provider: models.provider,
         role: catalogRole,
-        model: modelId,
-        inference_config: getInferenceConfig(),
+        model_id: modelId,
+        inference: apiInferenceOptions(models),
       }),
     }, { label: `Validate model '${modelId}'`, timeoutMs: 25000 });
     if (!data.ok) {
@@ -265,6 +295,8 @@ function hashString(value) {
 function modelConfigFingerprint(models = getModels()) {
   const payload = {
     provider: models.provider,
+    databricksBaseUrlHash: hashString(models.databricks.baseUrl || ""),
+    databricksTokenHash: hashString(models.databricks.token || ""),
     hfTokenHash: hashString(models.huggingface.token || ""),
   };
   return hashString(JSON.stringify(payload));
@@ -353,50 +385,36 @@ function wireModelControls() {
   }
 
   function localModelPayload(modelId) {
-    return {
-      provider: "huggingface",
-      model: modelId,
-      inference_config: getInferenceConfig(),
-    };
-  }
-
-  async function consumeLocalDownload(response, roleKey) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let completed = false;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let separator;
-      while ((separator = buffer.indexOf("\n\n")) !== -1) {
-        const chunk = buffer.slice(0, separator);
-        buffer = buffer.slice(separator + 2);
-        const line = chunk.split("\n").find((item) => item.startsWith("data: "));
-        if (!line) continue;
-        const event = JSON.parse(line.slice(6));
-        if (event.type === "error") throw new Error(event.message || "Local model download failed.");
-        if (event.type === "done") {
-          completed = true;
-          renderLocalProgress(roleKey, { ...event, percent: 100 });
-          break;
-        }
-        renderLocalProgress(roleKey, event);
-      }
-      if (completed) break;
-    }
-    if (!completed) throw new Error("The local model download ended before completion.");
+    return { model_id: modelId };
   }
 
   async function downloadSelectedLocalModel(roleKey, modelId) {
     renderLocalState(roleKey, "downloading", "Downloading local model…");
     renderLocalProgress(roleKey, { percent: 0, message: "Starting…" });
-    const response = await fetchStream(SERVICES.downloadLocalModel, {
+    const created = await fetchJSON(SERVICES.downloadLocalModel, {
       method: "POST",
       body: JSON.stringify(localModelPayload(modelId)),
-    }, { label: `Download local model '${modelId}'`, timeoutMs: 0 });
-    await consumeLocalDownload(response, roleKey);
+    }, { label: `Queue local model '${modelId}'`, timeoutMs: 30000 });
+    const jobUrl = `${SERVICES.downloadLocalModel}/${encodeURIComponent(created.job_id)}`;
+    while (true) {
+      const job = await fetchJSON(jobUrl, {}, {
+        label: `Inspect local model download '${modelId}'`,
+        timeoutMs: 30000,
+      });
+      renderLocalProgress(roleKey, {
+        percent: Math.max(0, Math.min(100, Number(job.progress || 0) * 100)),
+        message: job.message || "Downloading local model…",
+      });
+      if (job.status === "completed") break;
+      if (job.status === "failed" || job.status === "cancelled") {
+        throw new Error(
+          (job.error && job.error.message)
+          || job.message
+          || `Local model download ${job.status}.`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
     renderLocalProgress(roleKey, null);
     renderLocalState(roleKey, "ready", "Downloaded locally");
     return true;
@@ -480,6 +498,18 @@ function wireModelControls() {
       const active = b.dataset.provider === provider;
       b.classList.toggle("active", active);
       b.setAttribute("aria-pressed", active ? "true" : "false");
+      const showProvider = deploymentCapabilitiesLoaded
+        && deploymentCapabilities.deployment_profile !== "public";
+      const title = b.querySelector("[data-provider-title]");
+      const subtitle = b.querySelector("[data-provider-subtitle]");
+      const providerName = b.dataset.provider === "databricks" ? "Databricks" : "Hugging Face";
+      const inferenceMode = b.dataset.provider === "databricks"
+        ? "Remote inference" : "Local inference";
+      if (title) title.textContent = showProvider ? providerName : inferenceMode;
+      if (subtitle) {
+        subtitle.textContent = inferenceMode;
+        subtitle.hidden = !showProvider;
+      }
     });
     document.querySelectorAll("[data-provider-config]").forEach((el) => {
       const active = el.dataset.providerConfig === provider;
@@ -492,8 +522,16 @@ function wireModelControls() {
     });
 
     const hfEnabled = providerIsEnabled("huggingface");
+    const privateProviderConfig = deploymentCapabilitiesLoaded
+      && deploymentCapabilities.deployment_profile !== "public";
+    document.querySelectorAll("[data-provider-private-config]").forEach((el) => {
+      el.hidden = !privateProviderConfig;
+      el.querySelectorAll("input, select, textarea, button").forEach((control) => {
+        control.disabled = !privateProviderConfig || !providerEnabled;
+      });
+    });
     document.querySelectorAll("[data-hf-local-config]").forEach((el) => {
-      el.hidden = !hfEnabled;
+      el.hidden = !hfEnabled || !privateProviderConfig;
     });
     document.querySelectorAll("[data-hf-public-notice]").forEach((el) => {
       el.hidden = hfEnabled;
@@ -537,6 +575,8 @@ function wireModelControls() {
       );
     });
 
+    if (byId("databricks-base-url")) byId("databricks-base-url").value = fresh.databricks.baseUrl || "";
+    if (byId("databricks-token")) byId("databricks-token").value = fresh.databricks.token || "";
     if (byId("hf-token")) byId("hf-token").value = fresh.huggingface.token || "";
     if (byId("temperature")) byId("temperature").value = String(fresh.temperature);
     fillCustomRoleSelect();
@@ -566,7 +606,9 @@ function wireModelControls() {
     });
     const readyMessage = provider === "huggingface"
       ? "Local model settings are stored in this browser."
-      : "Remote inference is configured by this deployment.";
+      : (deploymentCapabilities.deployment_profile === "public"
+        ? "Remote inference is configured by this deployment."
+        : "Databricks settings are stored in this browser.");
     setModelStatus(providerEnabled
       ? readyMessage
       : (providerCapability(provider).message || providerUnavailableMessage(provider)));
@@ -575,7 +617,15 @@ function wireModelControls() {
   migrateToExplicitModelSelection();
   const init = getModels();
   apply(init.provider, true);
-  loadDeploymentCapabilities().then(() => apply(getModels().provider, true));
+  loadDeploymentCapabilities().then(() => {
+    apply(getModels().provider, true);
+    document.dispatchEvent(new CustomEvent("embedding-model-changed", {
+      detail: {
+        embeddingModel: getModels().embeddingModel,
+        configFingerprint: modelConfigFingerprint(),
+      },
+    }));
+  });
 
   document.querySelectorAll("[data-provider]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -612,6 +662,8 @@ function wireModelControls() {
       }
     });
   };
+  bindConfig("databricks-base-url", (value) => ({ databricks: { baseUrl: value } }), true);
+  bindConfig("databricks-token", (value) => ({ databricks: { token: value } }), true);
   bindConfig("hf-token", (value) => ({ huggingface: { token: value } }), true);
   bindConfig("temperature", (value) => ({ temperature: clampTemperature(value) }), false);
 
@@ -643,10 +695,10 @@ function wireModelControls() {
           const data = await fetchJSON(SERVICES.validateModel, {
             method: "POST",
             body: JSON.stringify({
-              provider: models.provider,
+              inference_provider: models.provider,
               role,
-              model: modelId,
-              inference_config: getInferenceConfig(),
+              model_id: modelId,
+              inference: apiInferenceOptions(models),
             }),
           }, { label: `Validate model '${modelId}'`, timeoutMs: 25000 });
           if (!data.ok) throw new Error(data.message || "Model validation failed.");

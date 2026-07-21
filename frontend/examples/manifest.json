@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "examples": [
+    {
+      "id": "epo-rule-evidence-information",
+      "title": "ePO - single data constraint",
+      "description": "Environmental emissions with required ranges, optional links and string alternatives.",
+      "workflow": "rule",
+      "session": "epo-rule-session.json"
+    },
+    {
+      "id": "epo-batch-ten-constraints",
+      "title": "ePO - batch of 10",
+      "description": "Ten grounded cardinality, datatype and range constraints from ePO.",
+      "workflow": "batch",
+      "session": "epo-batch-session.json"
+    }
+  ]
+}

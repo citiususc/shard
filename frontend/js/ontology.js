@@ -7,6 +7,23 @@ function setOntology(o) { saveJSON(STORE.ontology, o); }
 let ontologyEmbeddingPoll = null;
 let activeOntologyEmbedding = null;
 
+function embeddingJobDisplayState(state) {
+  if (!state || !state.job_id) return state || {};
+  const status = {
+    queued: "preparing",
+    running: "preparing",
+    completed: "ready",
+    failed: "error",
+    cancelled: "cancelled",
+  }[state.status] || state.status;
+  return {
+    ...state,
+    status,
+    completed: state.completed_terms || Math.round((state.progress || 0) * (state.total_terms || 0)),
+    total: state.total_terms || 0,
+  };
+}
+
 async function hashOntologyContent(content) {
   const value = String(content || "");
   if (window.crypto && window.crypto.subtle) {
@@ -100,13 +117,15 @@ function shapePrefixValidationError(prefix) {
 
 function syncPrefixesWithNamespaces(
   prefixBlock, baseNs, shapeNs, shapePrefix = "shape", managedPrefixes = ["onto", "shape"],
+  ontologyPrefix = "onto",
 ) {
   const base = normalizeNamespace(baseNs);
   const shapes = normalizeNamespace(shapeNs) || shapesNamespace(base);
   const preferred = normalizeShapePrefix(shapePrefix) || "shape";
+  const primary = normalizeShapePrefix(ontologyPrefix) || "onto";
   const managed = new Set(managedPrefixes || []);
   let next = prefixBlock || "";
-  if (base && managed.has("onto")) next = setPrefixLine(next, "onto", base);
+  if (base) next = setPrefixLine(next, primary, base);
   if (shapes) next = setPrefixLine(next, preferred, shapes);
   return next;
 }
@@ -167,6 +186,18 @@ function preferredPrefixForNamespace(prefixBlock, namespace, managedPrefixes = [
   return `shape${index}`;
 }
 
+function preferredOntologyPrefixForNamespace(prefixBlock, namespace, managedPrefixes = []) {
+  const managed = new Set(managedPrefixes || []);
+  const candidates = prefixEntries(prefixBlock)
+    .filter((entry) => entry.prefix && entry.namespace === namespace)
+    .sort((left, right) => {
+      const managedDifference = Number(managed.has(left.prefix)) - Number(managed.has(right.prefix));
+      if (managedDifference) return managedDifference;
+      return left.prefix.length - right.prefix.length || left.prefix.localeCompare(right.prefix);
+    });
+  return candidates.length ? candidates[0].prefix : "onto";
+}
+
 function pruneManagedPrefixAliases(prefixBlock, baseNs, shapeNs, shapePrefix, managedPrefixes) {
   const managed = new Set(managedPrefixes || []);
   let prefixes = prefixBlock || "";
@@ -196,6 +227,7 @@ function pruneManagedPrefixAliases(prefixBlock, baseNs, shapeNs, shapePrefix, ma
 
 function ensureGeneratorPrefixes(
   prefixBlock, baseNs, shapeNs = "", shapePrefix = "shape", managedPrefixes = ["onto", "shape"],
+  ontologyPrefix = "onto",
 ) {
   const base = normalizeNamespace(baseNs);
   const shapes = normalizeNamespace(shapeNs)
@@ -204,7 +236,7 @@ function ensureGeneratorPrefixes(
     || prefixNamespace(prefixBlock, "onto-sh")
     || shapesNamespace(base);
   return syncPrefixesWithNamespaces(
-    prefixBlock || "", base, shapes, shapePrefix, managedPrefixes,
+    prefixBlock || "", base, shapes, shapePrefix, managedPrefixes, ontologyPrefix,
   );
 }
 
@@ -268,6 +300,8 @@ function repairOntologyNamespaces(o) {
   const storedManagedPrefixes = Array.isArray(o.managedNamespacePrefixes)
     ? o.managedNamespacePrefixes
     : ["shape"];
+  const ontologyPrefix = normalizeShapePrefix(o.ontologyPrefix)
+    || preferredOntologyPrefixForNamespace(o.prefixes || "", baseNamespace, storedManagedPrefixes);
   const shapeNamespace = normalizeNamespace(
     o.shapeNamespace
       || prefixNamespace(o.prefixes || "", normalizeShapePrefix(o.shapePrefix))
@@ -296,10 +330,12 @@ function repairOntologyNamespaces(o) {
   const managedNamespacePrefixes = pruned.managedPrefixes;
   const prefixes = ensureGeneratorPrefixes(
     pruned.prefixes, baseNamespace, shapeNamespace, shapePrefix, managedNamespacePrefixes,
+    ontologyPrefix,
   );
   const next = {
     ...o,
     baseNamespace,
+    ontologyPrefix,
     shapeNamespace,
     shapePrefix,
     namespaceSource: o.namespaceSource || (baseNamespace ? "detected" : "none"),
@@ -337,6 +373,34 @@ function replacePreferredShapePrefix(ontology, nextPrefix, source) {
 
   o.shapePrefix = preferred;
   o.shapePrefixSource = source;
+  o.managedNamespacePrefixes = Array.from(managed);
+  o.prefixes = prefixes;
+  return o;
+}
+
+function replacePrimaryOntologyPrefix(ontology, nextPrefix) {
+  const o = { ...ontology };
+  const preferred = normalizeShapePrefix(nextPrefix);
+  const error = shapePrefixValidationError(preferred);
+  if (error) throw new Error(error.replace("Shape prefix", "Ontology prefix"));
+
+  const oldPrefix = normalizeShapePrefix(o.ontologyPrefix) || "onto";
+  const managed = new Set(o.managedNamespacePrefixes || []);
+  let prefixes = o.prefixes || "";
+  if (oldPrefix && oldPrefix !== preferred
+      && prefixNamespace(prefixes, oldPrefix) === o.baseNamespace) {
+    prefixes = removePrefixLine(prefixes, oldPrefix);
+    managed.delete(oldPrefix);
+  }
+
+  const existing = prefixNamespace(prefixes, preferred);
+  if (existing && existing !== o.baseNamespace) {
+    throw new Error(`Prefix '${preferred}' is already bound to ${existing}.`);
+  }
+  if (!existing) managed.add(preferred);
+  prefixes = setPrefixLine(prefixes, preferred, o.baseNamespace);
+
+  o.ontologyPrefix = preferred;
   o.managedNamespacePrefixes = Array.from(managed);
   o.prefixes = prefixes;
   return o;
@@ -388,32 +452,26 @@ async function cancelOntologyEmbeddingPreparation(target = activeOntologyEmbeddi
   }
   if (activeOntologyEmbedding === target) activeOntologyEmbedding = null;
   try {
-    await fetchJSON(SERVICES.cancelTerms, {
-      method: "POST",
-      body: JSON.stringify({
-        ontology_hash: target.ontologyHash,
-        embedding_model: target.embeddingModel,
-        config_fingerprint: target.configFingerprint,
-        inference_config: target.inferenceConfig,
-      }),
-      keepalive: true,
-    }, { label: "Cancel ontology embedding preparation", timeoutMs: 5000 });
+    if (target.jobId) {
+      await fetchJSON(`${SERVICES.prepareTerms}/${encodeURIComponent(target.jobId)}`, {
+        method: "DELETE",
+        keepalive: true,
+      }, { label: "Cancel ontology embedding preparation", timeoutMs: 5000 });
+      return;
+    }
   } catch { /* The service may already be stopping or the job may be complete. */ }
 }
 
 async function pollOntologyEmbeddingStatus(target) {
   if (activeOntologyEmbedding !== target) return;
   try {
-    const state = await fetchJSON(SERVICES.termStatus, {
-      method: "POST",
-      body: JSON.stringify({
-        ontology_hash: target.ontologyHash,
-        ontology_fingerprint: target.ontologyFingerprint,
-        embedding_model: target.embeddingModel,
-        config_fingerprint: target.configFingerprint,
-        inference_config: target.inferenceConfig,
-      }),
-    }, { label: "Ontology embedding status", timeoutMs: 10000 });
+    if (!target.jobId) return;
+    const rawState = await fetchJSON(
+      `${SERVICES.prepareTerms}/${encodeURIComponent(target.jobId)}`,
+      { method: "GET" },
+      { label: "Ontology embedding status", timeoutMs: 10000 },
+    );
+    const state = embeddingJobDisplayState(rawState);
     if (activeOntologyEmbedding !== target) return;
     const current = getOntology();
     if (!current || current.contentHash !== target.ontologyHash
@@ -457,22 +515,17 @@ async function prepareOntologyEmbeddings(o) {
   }
 
   const embeddingModel = getModels().embeddingModel;
-  const inferenceConfig = getInferenceConfig();
   const configFingerprint = modelConfigFingerprint();
   const target = {
     ontologyHash: o.contentHash,
     embeddingModel,
     configFingerprint,
-    inferenceConfig,
     payload: {
+      ontology_terms: o.entities.map(apiOntologyTerm),
       ontology_hash: o.contentHash,
-      ontology_terms: o.entities,
-      embedding_model: embeddingModel,
-      config_fingerprint: configFingerprint,
-      inference_config: inferenceConfig,
+      inference: apiInferenceOptions(getModels()),
     },
   };
-
   if (activeOntologyEmbedding
       && (activeOntologyEmbedding.ontologyHash !== target.ontologyHash
           || activeOntologyEmbedding.embeddingModel !== target.embeddingModel
@@ -482,12 +535,13 @@ async function prepareOntologyEmbeddings(o) {
   activeOntologyEmbedding = target;
 
   try {
-    const state = await fetchJSON(SERVICES.prepareTerms, {
+    const rawState = await fetchJSON(SERVICES.prepareTerms, {
       method: "POST",
       body: JSON.stringify(target.payload),
     }, { label: "Prepare ontology embeddings", timeoutMs: 15000 });
     if (activeOntologyEmbedding !== target) return;
-    target.ontologyFingerprint = state.ontology_fingerprint;
+    target.jobId = rawState.job_id;
+    const state = embeddingJobDisplayState(rawState);
     renderOntologyEmbeddingState(o, state);
     if (state.status === "preparing" || state.status === "cancelling") {
       ontologyEmbeddingPoll = setTimeout(
@@ -508,6 +562,7 @@ async function wireOntologyControls(onLoaded) {
   const fileInput = byId("ontology-file");
   const summary = byId("ontology-summary");
   const nsInput = byId("base-namespace");
+  const ontologyPrefixInput = byId("ontology-prefix");
   const shapeNsInput = byId("shape-namespace");
   const shapePrefixInput = byId("shape-prefix");
   const namespaceSource = byId("namespace-source");
@@ -515,13 +570,16 @@ async function wireOntologyControls(onLoaded) {
   const shapePrefixSource = byId("shape-prefix-source");
   const namespaceSummary = byId("namespace-summary");
   const namespaceCandidates = byId("namespace-candidates");
-  const shapePrefixCandidates = byId("shape-prefix-candidates");
   const prefixEditor = byId("prefixes-editor");
   const resetPrefixes = byId("reset-prefixes");
+  const clearOntologyButton = byId("clear-ontology");
 
   const renderNamespaceControls = (o) => {
     if (!o) return;
+    if (clearOntologyButton) clearOntologyButton.disabled = false;
+    if (resetPrefixes) resetPrefixes.disabled = false;
     if (nsInput) nsInput.value = o.baseNamespace || "";
+    if (ontologyPrefixInput) ontologyPrefixInput.value = o.ontologyPrefix || "onto";
     if (shapeNsInput) shapeNsInput.value = o.shapeNamespace || "";
     if (shapePrefixInput) shapePrefixInput.value = o.shapePrefix || "shape";
     if (namespaceSource) {
@@ -551,22 +609,29 @@ async function wireOntologyControls(onLoaded) {
         namespaceCandidates.appendChild(option);
       });
     }
-    if (shapePrefixCandidates) {
-      shapePrefixCandidates.innerHTML = "";
-      const profileCandidate = profileShapePrefixCandidate(o.shapeNamespace);
-      const candidates = new Set([
-        o.shapePrefix,
-        profileCandidate,
-        ...prefixEntries(o.prefixes || "")
-          .filter((entry) => entry.namespace === o.shapeNamespace)
-          .map((entry) => entry.prefix),
-      ].filter(Boolean));
-      candidates.forEach((prefix) => {
-        const option = document.createElement("option");
-        option.value = prefix;
-        shapePrefixCandidates.appendChild(option);
-      });
+  };
+
+  const renderEmptyOntologyControls = () => {
+    if (fileInput) fileInput.value = "";
+    if (summary) summary.textContent = "No ontology loaded.";
+    if (nsInput) { nsInput.value = ""; nsInput.setCustomValidity(""); }
+    if (ontologyPrefixInput) { ontologyPrefixInput.value = ""; ontologyPrefixInput.setCustomValidity(""); }
+    if (shapeNsInput) { shapeNsInput.value = ""; shapeNsInput.setCustomValidity(""); }
+    if (shapePrefixInput) { shapePrefixInput.value = ""; shapePrefixInput.setCustomValidity(""); }
+    if (namespaceSource) {
+      namespaceSource.textContent = "Not detected";
+      namespaceSource.className = "namespace-source namespace-source-none";
     }
+    if (shapeNamespaceSource) {
+      shapeNamespaceSource.textContent = "Not detected";
+      shapeNamespaceSource.className = "namespace-source namespace-source-none";
+    }
+    if (shapePrefixSource) shapePrefixSource.hidden = true;
+    if (namespaceSummary) { namespaceSummary.textContent = ""; namespaceSummary.hidden = true; }
+    if (namespaceCandidates) namespaceCandidates.innerHTML = "";
+    if (prefixEditor) { prefixEditor.value = ""; refreshHighlight("prefixes-editor"); }
+    if (clearOntologyButton) clearOntologyButton.disabled = true;
+    if (resetPrefixes) resetPrefixes.disabled = true;
   };
 
   const validNamespaceFromInput = (input, label) => {
@@ -596,13 +661,32 @@ async function wireOntologyControls(onLoaded) {
   const renderFromStore = () => {
     let o = repairOntologyNamespaces(getOntology());
     if (o) o = synchronizePreferredShapePrefixWithProfiles({ notify: false });
-    if (!o) return;
+    if (!o) { renderEmptyOntologyControls(); return; }
     if (summary) summary.textContent = ontologySummaryText(o);
     renderNamespaceControls(o);
     if (prefixEditor) { prefixEditor.value = o.prefixes || ""; refreshHighlight("prefixes-editor"); }
     if (onLoaded) onLoaded(o);
     prepareOntologyEmbeddings(o);
   };
+
+  if (clearOntologyButton) {
+    clearOntologyButton.addEventListener("click", async () => {
+      const o = getOntology();
+      if (!o) return;
+      if (!confirm("Clear only the loaded ontology? Accepted shapes and other session settings will be kept.")) return;
+      await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding || {
+        ontologyHash: o.contentHash,
+        embeddingModel: getModels().embeddingModel,
+        configFingerprint: modelConfigFingerprint(),
+        inferenceConfig: getInferenceConfig(),
+      });
+      removeStoredValue(STORE.ontology);
+      removeStoredValue(STORE.astreaBaseline);
+      renderEmptyOntologyControls();
+      if (onLoaded) onLoaded(null);
+      setStatus("Ontology cleared");
+    });
+  }
 
   if (fileInput) {
     fileInput.addEventListener("change", async (ev) => {
@@ -613,19 +697,10 @@ async function wireOntologyControls(onLoaded) {
       try {
         const data = await fetchJSON(SERVICES.parse, {
           method: "POST",
-          body: JSON.stringify({ filename: file.name, content }),
+          body: JSON.stringify({ ontology: { filename: file.name, content } }),
         }, { label: "Parse ontology", timeoutMs: 30000 });
         if (data.error) throw new Error(data.error);
-        const previous = getOntology();
         const contentHash = await hashOntologyContent(content);
-        if (previous && previous.contentHash && previous.contentHash !== contentHash) {
-          await cancelOntologyEmbeddingPreparation({
-            ontologyHash: previous.contentHash,
-            embeddingModel: getModels().embeddingModel,
-            configFingerprint: modelConfigFingerprint(),
-            inferenceConfig: getInferenceConfig(),
-          });
-        }
         const namespaceAnalysis = data.namespace_analysis || {};
         const baseNamespace = data.base_namespace || "";
         const shapeNamespace = data.shape_namespace || shapesNamespace(baseNamespace);
@@ -637,10 +712,14 @@ async function wireOntologyControls(onLoaded) {
         const managedNamespacePrefixes = Array.isArray(namespaceAnalysis.managed_prefixes)
           ? namespaceAnalysis.managed_prefixes
           : ["onto", shapePrefix];
+        const ontologyPrefix = preferredOntologyPrefixForNamespace(
+          data.prefixes || "", baseNamespace, managedNamespacePrefixes,
+        );
         setOntology({
           filename: file.name, content,
           contentHash,
           baseNamespace,
+          ontologyPrefix,
           shapeNamespace,
           shapePrefix,
           namespaceSource: baseNamespace ? "detected" : "none",
@@ -656,6 +735,7 @@ async function wireOntologyControls(onLoaded) {
             shapeNamespace,
             shapePrefix,
             managedNamespacePrefixes,
+            ontologyPrefix,
           ),
           entities: data.entities || [],
         });
@@ -686,7 +766,7 @@ async function wireOntologyControls(onLoaded) {
     }
     o.prefixes = ensureGeneratorPrefixes(
       o.prefixes || "", o.baseNamespace, o.shapeNamespace, o.shapePrefix,
-      o.managedNamespacePrefixes,
+      o.managedNamespacePrefixes, o.ontologyPrefix,
     );
     setOntology(o);
     renderNamespaceControls(o);
@@ -695,6 +775,25 @@ async function wireOntologyControls(onLoaded) {
       refreshHighlight("prefixes-editor");
     }
     setStatus("Primary ontology namespace and prefixes synchronized");
+  });
+  if (ontologyPrefixInput) ontologyPrefixInput.addEventListener("change", () => {
+    const o = getOntology();
+    if (!o) return;
+    try {
+      ontologyPrefixInput.setCustomValidity("");
+      const next = replacePrimaryOntologyPrefix(o, ontologyPrefixInput.value);
+      setOntology(next);
+      renderNamespaceControls(next);
+      if (prefixEditor) {
+        prefixEditor.value = next.prefixes;
+        refreshHighlight("prefixes-editor");
+      }
+      setStatus("Primary ontology prefix synchronized");
+    } catch (error) {
+      ontologyPrefixInput.setCustomValidity(error.message);
+      ontologyPrefixInput.reportValidity();
+      setStatus(`Ontology prefix: ${error.message}`);
+    }
   });
   if (shapeNsInput) shapeNsInput.addEventListener("change", () => {
     const o = getOntology();
@@ -709,7 +808,7 @@ async function wireOntologyControls(onLoaded) {
     }
     o.prefixes = ensureGeneratorPrefixes(
       o.prefixes || "", o.baseNamespace, o.shapeNamespace, o.shapePrefix,
-      o.managedNamespacePrefixes,
+      o.managedNamespacePrefixes, o.ontologyPrefix,
     );
     setOntology(o);
     renderNamespaceControls(o);
@@ -744,7 +843,8 @@ async function wireOntologyControls(onLoaded) {
     if (!o) return;
     o.prefixes = prefixEditor.value;
     const managedPrefixes = new Set(o.managedNamespacePrefixes || []);
-    const baseNamespace = managedPrefixes.has("onto") ? prefixNamespace(o.prefixes, "onto") : "";
+    const ontologyPrefix = normalizeShapePrefix(o.ontologyPrefix) || "onto";
+    const baseNamespace = prefixNamespace(o.prefixes, ontologyPrefix);
     let shapePrefix = normalizeShapePrefix(o.shapePrefix);
     let shapeNamespace = prefixNamespace(o.prefixes, shapePrefix);
     if (!shapeNamespace) {
@@ -771,7 +871,7 @@ async function wireOntologyControls(onLoaded) {
     const customShapePrefix = o.shapePrefixSource === "custom" ? o.shapePrefix : "";
     const data = await fetchJSON(SERVICES.parse, {
       method: "POST",
-      body: JSON.stringify({ filename: o.filename, content: o.content }),
+      body: JSON.stringify({ ontology: apiOntologyInput(o) }),
     }, { label: "Reset ontology prefixes", timeoutMs: 30000 });
     o.baseNamespace = o.baseNamespace || data.base_namespace || "";
     o.shapeNamespace = o.shapeNamespace || data.shape_namespace || shapesNamespace(o.baseNamespace);
@@ -779,6 +879,9 @@ async function wireOntologyControls(onLoaded) {
     o.managedNamespacePrefixes = Array.isArray(o.namespaceAnalysis.managed_prefixes)
       ? o.namespaceAnalysis.managed_prefixes : ["onto", "shape"];
     o.prefixes = data.prefixes || "";
+    o.ontologyPrefix = preferredOntologyPrefixForNamespace(
+      o.prefixes, o.baseNamespace, o.managedNamespacePrefixes,
+    );
     o.shapePrefix = normalizeShapePrefix(data.shape_prefix)
       || preferredPrefixForNamespace(o.prefixes, o.shapeNamespace, o.managedNamespacePrefixes);
     o.shapePrefixSource = o.namespaceAnalysis.shape_prefix_source || "default";
@@ -787,7 +890,7 @@ async function wireOntologyControls(onLoaded) {
     } else {
       o.prefixes = ensureGeneratorPrefixes(
         o.prefixes, o.baseNamespace, o.shapeNamespace, o.shapePrefix,
-        o.managedNamespacePrefixes,
+        o.managedNamespacePrefixes, o.ontologyPrefix,
       );
     }
     setOntology(o);

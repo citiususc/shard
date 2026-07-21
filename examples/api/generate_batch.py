@@ -20,13 +20,21 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-url", default="http://127.0.0.1:8768/api/v1")
     parser.add_argument("--ontology", type=Path, default=ASSET_EXAMPLE / "ontology.ttl")
-    parser.add_argument("--guide", type=Path, default=ASSET_EXAMPLE / "business-rules.md")
+    parser.add_argument("--batch", type=Path, default=ASSET_EXAMPLE / "business-rules.md")
     parser.add_argument("--context", type=Path, default=ASSET_EXAMPLE / "generation-context.md")
     parser.add_argument("--profile", action="append", type=Path, default=[])
     parser.add_argument("--provider", choices=("databricks", "huggingface"), default="databricks")
-    parser.add_argument("--astrea-mode", choices=("none", "baseline", "merge", "both"), default="none")
-    parser.add_argument("--merge-technique", choices=("priority-llm", "restrictive"), default="priority-llm")
-    parser.add_argument("--output", type=Path, default=Path("shard-guide-shapes.ttl"))
+    parser.add_argument(
+        "--astrea-mode",
+        choices=("none", "evidence", "merge", "evidence-and-merge"),
+        default="none",
+    )
+    parser.add_argument(
+        "--merge-strategy",
+        choices=("generated-priority", "restrictive"),
+        default="generated-priority",
+    )
+    parser.add_argument("--output", type=Path, default=Path("shard-batch-shapes.ttl"))
     parser.add_argument("--timeout", type=int, default=1800)
     return parser.parse_args()
 
@@ -65,9 +73,9 @@ def main():
             "filename": args.ontology.name,
             "content": args.ontology.read_text(encoding="utf-8"),
         },
-        "guide": {
-            "filename": args.guide.name,
-            "content": args.guide.read_text(encoding="utf-8"),
+        "batch": {
+            "filename": args.batch.name,
+            "content": args.batch.read_text(encoding="utf-8"),
         },
         "inference": inference_config(args.provider),
         "generation": {
@@ -81,17 +89,20 @@ def main():
             "wait_embeddings": True,
             "embedding_timeout": args.timeout,
         },
-        "validation_profiles": profiles,
+        "validation": {"profiles": profiles},
         "astrea": {
             "mode": args.astrea_mode,
-            "merge_technique": args.merge_technique,
+            "merge_strategy": args.merge_strategy,
             "failure_policy": "continue",
         },
     }
     request = urllib.request.Request(
-        f"{args.api_url.rstrip('/')}/workflows/guide-to-shapes",
+        f"{args.api_url.rstrip('/')}/workflows/batch-to-shapes",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
         method="POST",
     )
     try:
@@ -104,10 +115,9 @@ def main():
         raise SystemExit(f"Could not reach SHARD at {args.api_url}: {exc.reason}") from exc
 
     args.output.write_text(result.get("final_shape_document", ""), encoding="utf-8")
-    generation = result.get("generation") or {}
     unresolved = [
-        item.get("rule_number")
-        for item in generation.get("unresolved_rules") or []
+        (item.get("rule") or {}).get("number")
+        for item in result.get("unresolved_rules") or []
     ]
     print(json.dumps({
         "request_id": result.get("request_id"),

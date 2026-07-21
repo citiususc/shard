@@ -228,7 +228,7 @@ def print_semantic_debug(result, *, rule_ids, top_k):
 def run_case(
     label,
     ontology_path,
-    guide_path,
+    batch_path,
     *,
     injected=False,
     real=False,
@@ -242,8 +242,8 @@ def run_case(
     payload = {
         "ontology_content": Path(ontology_path).read_text(),
         "ontology_filename": Path(ontology_path).name,
-        "guide_content": Path(guide_path).read_text(),
-        "guide_filename": Path(guide_path).name,
+        "batch_content": Path(batch_path).read_text(),
+        "batch_filename": Path(batch_path).name,
         "top_k": 50,
     }
     if real:
@@ -357,14 +357,14 @@ def main():
     ]
     debug_rule_ids = _split_rule_ids(args.debug_rules)
     try:
-        for label, case_name, ontology, guide in cases:
+        for label, case_name, ontology, batch in cases:
             if args.case != "all" and args.case != case_name:
                 continue
             if args.mode in {"real", "all"}:
                 run_case(
                     f"{label} / real rank_semantic",
                     ontology,
-                    guide,
+                    batch,
                     real=True,
                     wait_embeddings=args.wait_embeddings,
                     timeout_seconds=args.embedding_timeout,
@@ -377,7 +377,7 @@ def main():
                 run_case(
                     f"{label} / injected semantic+llm",
                     ontology,
-                    guide,
+                    batch,
                     injected=True,
                     semantic_threshold=args.semantic_threshold,
                     debug_rule_ids=debug_rule_ids,

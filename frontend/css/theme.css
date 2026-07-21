@@ -745,14 +745,14 @@ body.landing-page { background: var(--bg); }
   .landing p.lead { font-size: 0.98rem; }
   .hero-actions { margin-top: 10px; }
   .github-repository-link { min-height: 38px; height: 38px; }
-  body.guide-page .evidence-column {
+  body.batch-page .evidence-column {
     grid-template-rows:
       var(--matched-generation-block-height)
       var(--matched-shape-profile-block-height)
       210px
       minmax(0, 1fr);
   }
-  body.guide-page .guide-template-block .template-help p {
+  body.batch-page .batch-template-block .template-help p {
     font-size: 0.7rem;
     line-height: 1.2;
   }

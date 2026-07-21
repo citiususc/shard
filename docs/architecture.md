@@ -7,16 +7,19 @@ or one TCP port per service.
 1. **Ontology Catalog and Retrieval Service** parses the uploaded ontology,
    produces the shared term catalog, retrieves relevant terms and manages the
    optional semantic index used for ranking.
-2. **Business Rule Grounding Service** maps each business rule to focus nodes,
+2. **Data Constraint Grounding Service** maps each data constraint to focus nodes,
    constrained property paths and related ontology terms through the auditable
    label, semantic and constrained-LLM cascade. It does not generate SHACL.
 3. **Shape Generation Service** generates one grounded constraint document
-   from a business rule and its reviewed ontology context.
+   from a data constraint and its reviewed ontology context. Its default model
+   loop separates authoring, semantic critique and correction. The critic emits
+   a closed issue report, the corrector acts on that report, and a subsequent
+   critic call must approve the corrected document.
 4. **Shape Assurance and Baseline Integration Service** applies syntax and
    SHACL for SHACL validation, obtains optional ontology baselines and performs
    user-selected merge strategies.
-5. **Authoring Workflow Service** orchestrates both Rule to Shape and Batch to
-   Rules across parsing, grounding, generation, validation and consolidation.
+5. **Authoring Workflow Service** orchestrates both Rule-to-Shape and
+   Batch-to-Shapes across parsing, grounding, generation, validation and consolidation.
 
 The model availability check and ontology-index lifecycle operations are
 auxiliary endpoints. They support the five capabilities but are not presented
@@ -34,18 +37,24 @@ domain logic.
 ```text
 Authoring Workflow Service
   -> Ontology Catalog and Retrieval Service
-  -> Business Rule Grounding Service
+  -> Data Constraint Grounding Service
        -> Ontology semantic index (optional)
   -> Shape Generation Service
   -> Shape Assurance and Baseline Integration Service
 ```
 
-Rule to Shape and Batch to Rules call the same ontology, grounding,
+Rule-to-Shape and Batch-to-Shapes call the same ontology, grounding,
 generation and assurance capabilities. The batch workflow additionally
 consolidates per-rule results and can expose progress through SSE.
 
+The model-based semantic critique does not replace deterministic assurance.
+Every candidate and correction still passes Turtle parsing and ontology IRI
+grounding, and the final document passes the generic and opt-in domain SHACL
+for SHACL profiles. Semantic interpretation remains an LLM responsibility;
+SHARD does not apply a hard-coded rule-to-shape alignment heuristic.
+
 `src/shard/application/workflows.py` exposes the same compositions to
-programmatic clients as one-call Rule to Shape and Batch to Rules use cases.
+programmatic clients as one-call Rule-to-Shape and Batch-to-Shapes use cases.
 It normalizes the public nested request contract and delegates every domain
 step to the existing application functions; it is not a parallel generator.
 
@@ -66,7 +75,7 @@ details and are intentionally absent from the logical service model.
 
 ## Source layers
 
-The `shard.domain` package owns business-rule and ontology concepts.
+The `shard.domain` package owns data-constraint and ontology concepts.
 `shard.application` owns use cases and depends on domain, inference, baselines
 and observability. `shard.api` translates HTTP and SSE requests into those use
 cases. Application modules never import request handlers or sibling network

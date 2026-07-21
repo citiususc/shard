@@ -14,6 +14,8 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from shard.api.compat import compatibility_server_specs
 from shard.api.contract import (
     SERVICE_LAYOUT_ENV,
@@ -34,6 +36,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable or shutil.which("python3")
 DEFAULT_WEB_HOST = "127.0.0.1"
 DEFAULT_WEB_PORT = 8768
+
+
+def load_environment(env_file=None):
+    """Load the nearest SHARD .env file without overriding process settings."""
+    candidates = (
+        (Path(env_file).expanduser(),) if env_file else (
+            Path.cwd() / ".env",
+            PROJECT_ROOT / ".env",
+        )
+    )
+    visited = set()
+    for candidate in candidates:
+        path = candidate.resolve()
+        if path in visited:
+            continue
+        visited.add(path)
+        if path.is_file():
+            load_dotenv(dotenv_path=path, override=False)
+            return path
+    return None
 
 
 def _frontend_root() -> Path:
@@ -61,7 +83,7 @@ SPLIT_PROCESSES = tuple(
         "ontology",
         "term-ranking",
         "shapes",
-        "guide",
+        "batch",
         "target-resolution",
     )
 )
@@ -81,11 +103,18 @@ class ApplicationHTTPRequestHandler(SimpleHTTPRequestHandler):
         system_request = path in {
             "/api/v1",
             "/api/v1/docs",
+            "/api/v1/redoc",
             "/api/v1/openapi.json",
             "/api/v1/capabilities",
             "/api/v1/health",
         }
-        if self.service_layout == UNIFIED_LAYOUT or system_request:
+        job_request = (
+            path == "/api/v1/ontology/indexes"
+            or path.startswith("/api/v1/ontology/indexes/")
+            or path == "/api/v1/models/local/downloads"
+            or path.startswith("/api/v1/models/local/downloads/")
+        )
+        if self.service_layout == UNIFIED_LAYOUT or system_request or job_request:
             return dispatch_api_request(self)
         return False
 
@@ -100,6 +129,11 @@ class ApplicationHTTPRequestHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self._dispatch_api():
+            return
+        self.send_error(404, "Unknown endpoint")
+
+    def do_DELETE(self):
         if self._dispatch_api():
             return
         self.send_error(404, "Unknown endpoint")
@@ -152,6 +186,7 @@ def _start_server(host, port, handler):
 
 def main(argv=None):
     """Start SHARD and block until interrupted."""
+    env_file = load_environment()
     args = parse_args(argv)
     children = []
     servers = []
@@ -210,14 +245,16 @@ def main(argv=None):
     servers.append(_start_server(args.host, args.port, web_handler))
 
     display_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
+    if env_file:
+        print(f"Environment: {env_file}")
     print(f"\nSHARD:   http://{display_host}:{args.port}/index.html")
     print(f"Profile: {args.deployment_profile}")
     print(f"Layout:  {args.service_layout}")
     print(f"API:     http://{display_host}:{args.port}/api/v1")
     print(f"  Rule -> Shape:   http://{display_host}:{args.port}/rule.html")
-    print(f"  Guide -> Shapes: http://{display_host}:{args.port}/guide.html")
+    print(f"  Batch -> Shapes: http://{display_host}:{args.port}/batch.html")
     print("\nCompatibility ports: :9100 ontology, :9101 terms, :9102 shapes, "
-          ":9103 guide, :9104 resolver")
+          ":9103 batch, :9104 resolver")
     print("\nPress Ctrl+C to stop everything.")
 
     while True:

@@ -1,5 +1,5 @@
 """
-Business-rule template parsing shared by SHARD workflows and tests.
+Data-constraint template parsing shared by SHARD workflows and tests.
 
 The parser is domain-agnostic: rule identifiers are opaque strings and no
 ontology-specific index convention is assumed.
@@ -17,7 +17,7 @@ from shard.observability import logger
 
 @dataclass
 class BusinessRule:
-    """Normalized business-rule entry extracted from a template."""
+    """Normalized data-constraint entry extracted from a template."""
 
     number: str
     title: str
@@ -28,7 +28,7 @@ class BusinessRule:
 
 @dataclass
 class BusinessRulesDocument:
-    """Parsed business-rule template with optional document metadata."""
+    """Parsed data-constraint template with optional document metadata."""
 
     source_format: str
     metadata: Dict[str, str]
@@ -61,7 +61,7 @@ def _normalise_format(fmt: Optional[str], filename: str = "", content: str = "")
         return "html"
     if re.search(r"(?im)^\s*##\s+rule\s*$", content or ""):
         return "md"
-    raise ValueError("Business rules template format must be .html or .md.")
+    raise ValueError("Data constraints template format must be .html or .md.")
 
 
 def _read_source(path_or_content: str | Path, filename: str = "") -> tuple[str, str]:
@@ -73,7 +73,7 @@ def _read_source(path_or_content: str | Path, filename: str = "") -> tuple[str, 
 
 def _field_text(el, field_name: str) -> str:
     if el is None:
-        logger.warn(f"Business rule template: missing {field_name}; using empty string.")
+        logger.warn(f"Data constraint template: missing {field_name}; using empty string.")
         return ""
     text = el.get_text(" ", strip=True)
     return re.sub(rf"^\s*{re.escape(field_name)}\s*:\s*", "", text, flags=re.I).strip()
@@ -81,7 +81,7 @@ def _field_text(el, field_name: str) -> str:
 
 def _business_rule_html_text(el) -> str:
     if el is None:
-        logger.warn("Business rule template: missing business-rule text; using empty string.")
+        logger.warn("Data constraint template: missing constraint text; using empty string.")
         return ""
     paragraphs = [p.get_text(" ", strip=True) for p in el.find_all("p")]
     paragraphs = [p for p in paragraphs if p]
@@ -103,19 +103,19 @@ def _parse_html_document(content: str, filename: str = "") -> BusinessRulesDocum
 
     sections = soup.select("section.rule")
     if not sections:
-        logger.warn("Business rule template: no <section class=\"rule\"> entries found.")
+        logger.warn("Data constraint template: no <section class=\"rule\"> entries found.")
 
     rules: List[BusinessRule] = []
     for idx, section in enumerate(sections, start=1):
         number = _field_text(section.select_one(".number"), "Number")
         title = _field_text(section.select_one(".title"), "Title")
-        text = _business_rule_html_text(section.select_one(".business-rule"))
+        text = _business_rule_html_text(section.select_one(".data-constraint, .business-rule"))
         if not number:
-            logger.warn(f"Business rule template: rule {idx} has no Number.")
+            logger.warn(f"Data constraint template: entry {idx} has no Number.")
         if not title:
-            logger.warn(f"Business rule template: rule {idx} has no Title.")
+            logger.warn(f"Data constraint template: entry {idx} has no Title.")
         if not text:
-            logger.warn(f"Business rule template: rule {number or idx} has empty business-rule text.")
+            logger.warn(f"Data constraint template: entry {number or idx} has empty constraint text.")
         rules.append(BusinessRule(
             number=number,
             title=title,
@@ -128,7 +128,10 @@ def _parse_html_document(content: str, filename: str = "") -> BusinessRulesDocum
 
 
 def _metadata_value(markdown: str, label: str) -> str:
-    match = re.search(rf"(?im)^\s*-\s*{re.escape(label)}\s*:\s*(.*)$", markdown)
+    match = re.search(
+        rf"(?im)^[ \t]*-[ \t]*{re.escape(label)}[ \t]*:[ \t]*(.*)$",
+        markdown,
+    )
     return match.group(1).strip() if match else ""
 
 
@@ -143,7 +146,7 @@ def _parse_md_document(content: str, filename: str = "") -> BusinessRulesDocumen
 
     headings = list(re.finditer(r"(?im)^\s*##\s+Rule\s*$", text))
     if not headings:
-        logger.warn("Business rule template: no '## Rule' sections found.")
+        logger.warn("Data constraint template: no '## Rule' sections found.")
 
     rules: List[BusinessRule] = []
     for idx, heading in enumerate(headings, start=1):
@@ -152,25 +155,25 @@ def _parse_md_document(content: str, filename: str = "") -> BusinessRulesDocumen
         raw = text[heading.start():end].strip()
         block = text[start:end].strip()
 
-        number_match = re.search(r"(?im)^\s*-\s*Number\s*:\s*(.*)$", block)
-        title_match = re.search(r"(?im)^\s*-\s*Title\s*:\s*(.*)$", block)
-        rule_match = re.search(r"(?im)^\s*###\s+Business rule\s*$", block)
+        number_match = re.search(r"(?im)^[ \t]*-[ \t]*Number[ \t]*:[ \t]*(.*)$", block)
+        title_match = re.search(r"(?im)^[ \t]*-[ \t]*Title[ \t]*:[ \t]*(.*)$", block)
+        rule_match = re.search(r"(?im)^\s*###\s+(?:Data constraint|Business rule)\s*$", block)
 
         number = number_match.group(1).strip() if number_match else ""
         title = title_match.group(1).strip() if title_match else ""
         if not number_match:
-            logger.warn(f"Business rule template: rule {idx} has no Number.")
+            logger.warn(f"Data constraint template: entry {idx} has no Number.")
         if not title_match:
-            logger.warn(f"Business rule template: rule {idx} has no Title.")
+            logger.warn(f"Data constraint template: entry {idx} has no Title.")
 
         rule_text = ""
         if rule_match:
             rule_text = block[rule_match.end():]
             rule_text = re.split(r"(?m)^\s*---\s*$", rule_text, maxsplit=1)[0].strip()
         else:
-            logger.warn(f"Business rule template: rule {number or idx} has no Business rule section.")
+            logger.warn(f"Data constraint template: entry {number or idx} has no Data constraint section.")
         if not rule_text:
-            logger.warn(f"Business rule template: rule {number or idx} has empty business-rule text.")
+            logger.warn(f"Data constraint template: entry {number or idx} has empty constraint text.")
 
         rules.append(BusinessRule(
             number=number,
@@ -188,7 +191,7 @@ def parse_business_rules_document(
     fmt: Optional[str] = None,
     filename: str = "",
 ) -> BusinessRulesDocument:
-    """Parse a Business Rules template into a normalized document object."""
+    """Parse a Data Constraints template into a normalized document object."""
     content, inferred_filename = _read_source(path_or_content, filename)
     filename = filename or inferred_filename
     source_format = _normalise_format(fmt, filename=filename, content=content)
@@ -202,10 +205,10 @@ def parse_business_rules(
     fmt: Optional[str] = None,
     filename: str = "",
 ) -> List[BusinessRule]:
-    """Parse a Business Rules template and return normalized rule entries."""
+    """Parse a Data Constraints template and return normalized entries."""
     return parse_business_rules_document(path_or_content, fmt=fmt, filename=filename).rules
 
 
 def business_rule_to_dict(rule: BusinessRule) -> Dict[str, str]:
-    """Convert a normalized business rule dataclass to a JSON-safe dict."""
+    """Convert a normalized data constraint dataclass to a JSON-safe dict."""
     return asdict(rule)

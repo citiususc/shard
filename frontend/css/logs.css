@@ -41,7 +41,7 @@
   line-height: 1;
 }
 .topnav > .navlink[href="rule.html"] { width: 120px; }
-.topnav > .navlink[href="guide.html"] { width: 132px; }
+.topnav > .navlink[href="batch.html"] { width: 132px; }
 .topnav > .logs-button { width: 84px; font-size: 0.82rem; }
 .topnav > .status-pill {
   width: 116px;

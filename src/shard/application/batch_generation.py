@@ -1,12 +1,12 @@
-"""Orchestrate rule-first SHACL generation from a business-rule batch.
+"""Orchestrate rule-first SHACL generation from a data-constraint batch.
 
-Runs the full SHARD pipeline on an uploaded Business Rules template
+Runs the full SHARD pipeline on an uploaded Data Constraints template
 (.html or .md) and streams the result shape-by-shape over Server-Sent-Events,
 so the human-in-the-loop review queue fills up while generation continues.
 
 Rule-first pipeline (all inference routed through ``shard.inference``):
   1. parse the ontology
-  2. validate and parse the Business Rules template
+  2. validate and parse the Data Constraints template
   3. resolve each rule to role-grouped ontology terms
   4. call the shared builder once for the complete rule context
   5. validate and consolidate generated rule constraints by target class
@@ -23,6 +23,7 @@ from dataclasses import asdict
 
 from shard.baselines import baseline_from_payload, parse_baseline_shapes
 from shard.domain.business_rules import parse_business_rules_document
+from shard.domain.limits import MAX_SEMANTIC_TARGETS, MAX_TOP_K
 from shard.domain.ontology import (
     ontology_base_namespace,
     ontology_prefix_block,
@@ -31,6 +32,7 @@ from shard.domain.ontology import (
     parse_ontology_graph,
 )
 from shard.application.shape_consolidation import consolidate_rule_shapes
+from shard.deployment.operational import operational_settings
 
 
 def _truthy(value, default=False):
@@ -66,10 +68,10 @@ def prepare_astrea_graph(payload):
 
 
 def parse_business_rules_template(content: str, filename: str):
-    """Parse a Business Rules template into the guide service representation."""
+    """Parse a Data Constraints template into the batch service representation."""
     doc = parse_business_rules_document(content, filename=filename or "")
     if not doc.rules:
-        raise ValueError("The template is valid, but no business rule entries were found.")
+        raise ValueError("The template is valid, but no data-constraint entries were found.")
     return {
         "format": "markdown" if doc.source_format == "md" else doc.source_format,
         "metadata": doc.metadata,
@@ -133,7 +135,7 @@ def resolver_llm_from_payload(payload):
             {
                 "role": "system",
                 "content": (
-                    "You resolve a business rule to relevant ontology terms. "
+                    "You resolve a data constraint to relevant ontology terms. "
                     "Choose only from the provided candidate IRIs. "
                     "Return a JSON array of relevant ontology-term IRIs and nothing else. "
                     "Return [] if none are justified."
@@ -193,7 +195,7 @@ def _rule_text(rule):
         lines.append(f"Rule number: {rule.number}")
     if rule.title:
         lines.append(f"Rule title: {rule.title}")
-    lines.extend(["Business rule:", rule.text])
+    lines.extend(["Data constraint:", rule.text])
     return "\n".join(lines).strip()
 
 
@@ -215,7 +217,9 @@ def _prepare_rule_resolver_embeddings(payload, semantic_payload):
     from shard.application.term_ranking import embedding_status, prepare_embeddings
     from shard.observability import logger
 
-    timeout_seconds = int(payload.get("embedding_timeout", 900))
+    timeout_seconds = int(
+        payload.get("embedding_timeout", operational_settings().embedding_timeout_seconds)
+    )
     poll_seconds = float(payload.get("embedding_poll_seconds", 2.0))
     started = time.monotonic()
     result = prepare_embeddings(semantic_payload)
@@ -233,7 +237,7 @@ def _prepare_rule_resolver_embeddings(payload, semantic_payload):
         status = current.get("status", "unknown")
         line = f"{status}:{current.get('completed', 0)}/{current.get('total', 0)}"
         if line != last_line:
-            logger.info(f"[guide-rule] resolver embeddings {line}")
+            logger.info(f"[batch-rule] resolver embeddings {line}")
             last_line = line
         if status == "ready":
             return current
@@ -262,7 +266,7 @@ def _shape_status(result):
 
 
 def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, shape_builder=None, event_callback=None):
-    """Generate guide shapes by resolving each business rule before generation."""
+    """Generate batch shapes by resolving each data constraint before generation."""
     from shard.application.ontology_catalog import parse_ontology
     from shard.application.target_resolution import (
         DEFAULT_SEMANTIC_MAX_TARGETS,
@@ -271,16 +275,26 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
         resolve_rule_target,
     )
 
+    started_at = time.monotonic()
+    workflow_timeout = operational_settings().batch_workflow_timeout_seconds
+
+    def ensure_workflow_deadline():
+        if time.monotonic() - started_at > workflow_timeout:
+            raise TimeoutError(
+                f"Batch workflow exceeded its configured {workflow_timeout:g}s timeout."
+            )
+
     if shape_builder is None:
         from shard.application.shape_generation import build_shape
         shape_builder = build_shape
 
     ontology_content = payload.get("ontology_content", "")
     ontology_filename = payload.get("ontology_filename", "ontology.ttl")
-    guide_content = payload.get("guide_content", "")
-    guide_filename = payload.get("guide_filename", "")
+    batch_content = payload.get("batch_content", "")
+    batch_filename = payload.get("batch_filename", "")
 
     parsed_ontology = parse_ontology(ontology_filename, ontology_content)
+    ensure_workflow_deadline()
     astrea_graph = prepare_astrea_graph(payload)
     ontology_terms = parsed_ontology.get("entities") or []
     prefixes = payload.get("prefixes") or parsed_ontology.get("prefixes") or ""
@@ -289,10 +303,10 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
     shape_prefix = payload.get("shape_prefix") or parsed_ontology.get("shape_prefix") or "shape"
     target_by_key = _target_lookup(ontology_terms)
 
-    doc = parse_business_rules_document(guide_content, filename=guide_filename)
+    doc = parse_business_rules_document(batch_content, filename=batch_filename)
     rules = doc.rules
     if not rules:
-        raise ValueError("The template is valid, but no business rule entries were found.")
+        raise ValueError("The template is valid, but no data-constraint entries were found.")
     _emit(event_callback, {
         "type": "start",
         "unit": "rule",
@@ -307,6 +321,7 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
 
     semantic_payload = _semantic_payload(payload, ontology_content, ontology_terms)
     _prepare_rule_resolver_embeddings(payload, semantic_payload)
+    ensure_workflow_deadline()
     llm = resolver_llm if resolver_llm is not None else resolver_llm_from_payload(payload)
 
     generated_shapes = []
@@ -314,6 +329,7 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
     unresolved = []
 
     for index, rule in enumerate(rules, start=1):
+        ensure_workflow_deadline()
         _emit(event_callback, {
             "type": "status",
             "stage": "rule",
@@ -337,12 +353,13 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
             semantic_max_targets=max(
                 1,
                 min(
-                    20,
+                    MAX_SEMANTIC_TARGETS,
                     int(payload.get("semantic_max_targets", DEFAULT_SEMANTIC_MAX_TARGETS)),
                 ),
             ),
-            top_k=max(1, min(50, int(payload.get("top_k", 10)))),
+            top_k=max(1, min(MAX_TOP_K, int(payload.get("top_k", 10)))),
         )
+        ensure_workflow_deadline()
         resolution_dict = asdict(resolution)
         _emit(event_callback, {
             "type": "status",
@@ -467,6 +484,11 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
             "generation_guidance": payload.get("generation_guidance", ""),
         }
         result = shape_builder(shape_payload)
+        ensure_workflow_deadline()
+        if result.get("error_type") == "timeout":
+            raise TimeoutError(
+                result.get("error") or "The generation provider timed out."
+            )
         shape_row = {
             "rule_number": rule.number,
             "rule_title": rule.title,
@@ -502,6 +524,9 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
             "error": result.get("error") or result.get("message"),
             "error_type": result.get("error_type"),
             "attempts": result.get("attempts", 0),
+            "llm_review_applied": result.get("llm_review_applied", False),
+            "review_attempts": result.get("review_attempts", 0),
+            "semantic_review": result.get("semantic_review") or {},
             "syntax_valid": result.get("syntax_valid"),
             "profile_valid": result.get("profile_valid"),
             "profile_count": result.get("profile_count", 0),
@@ -516,6 +541,7 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
 
         rule_rows.append(rule_entry)
 
+    ensure_workflow_deadline()
     consolidated = consolidate_rule_shapes(
         generated_shapes,
         prefixes,
@@ -569,8 +595,8 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
     }
 
 
-def generate_guide_shapes(payload, *, semantic_ranker=None, resolver_llm=None, shape_builder=None, event_callback=None):
-    """Generate SHACL shapes by resolving and processing each business rule."""
+def generate_batch_shapes(payload, *, semantic_ranker=None, resolver_llm=None, shape_builder=None, event_callback=None):
+    """Generate SHACL shapes by resolving and processing each data constraint."""
     return _generate_rule_first(
         payload,
         semantic_ranker=semantic_ranker,
@@ -580,8 +606,8 @@ def generate_guide_shapes(payload, *, semantic_ranker=None, resolver_llm=None, s
     )
 
 
-def stream_guide_generation(payload, emit):
-    """Run guide generation and emit the existing SSE event sequence."""
+def stream_batch_generation(payload, emit):
+    """Run batch generation and emit the existing SSE event sequence."""
     ontology_content = payload.get("ontology_content", "")
 
     emit({"type": "status", "stage": "parsing", "message": "Parsing ontology…"})
@@ -598,17 +624,17 @@ def stream_guide_generation(payload, emit):
         onto, base_ns, shape_ns, shape_prefix,
     )
 
-    parsed_guide = payload.get("_business_rules") or parse_business_rules_template(
-        payload.get("guide_content", ""),
-        payload.get("guide_filename", ""),
+    parsed_batch = payload.get("_business_rules") or parse_business_rules_template(
+        payload.get("batch_content", ""),
+        payload.get("batch_filename", ""),
     )
-    rule_count = len(parsed_guide.get("rules") or [])
+    rule_count = len(parsed_batch.get("rules") or [])
     emit({
         "type": "status",
         "stage": "template",
         "current": rule_count,
         "total": rule_count,
-        "message": f"Validated Business Rules template: {rule_count} rule(s).",
+        "message": f"Validated Data Constraints template: {rule_count} constraint(s).",
     })
 
     payload.setdefault("prefixes", prefixes)
@@ -620,6 +646,6 @@ def stream_guide_generation(payload, emit):
         "stage": "preprocessing",
         "current": 0,
         "total": rule_count,
-        "message": "Preparing guide generation…",
+        "message": "Preparing batch generation…",
     })
-    generate_guide_shapes(payload, event_callback=emit)
+    generate_batch_shapes(payload, event_callback=emit)

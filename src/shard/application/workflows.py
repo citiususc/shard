@@ -12,14 +12,21 @@ from html import escape
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from shard.application.baseline_generation import generate_astrea_baseline
-from shard.application.guide_generation import generate_guide_shapes
+from shard.application.batch_generation import generate_batch_shapes
 from shard.application.shape_merge import merge_shapes
-from shard.integrations.astrea import AstreaResponseError, AstreaUnavailableError
+from shard.integrations.astrea import (
+    AstreaResponseError,
+    AstreaRateLimitError,
+    AstreaTimeoutError,
+    AstreaUnavailableError,
+)
 
 
-ASTREA_USE_MODES = {"none", "baseline", "merge", "both"}
+ASTREA_USE_MODES = {"none", "evidence", "merge", "evidence-and-merge"}
+ASTREA_USE_MODE_ALIASES = {"baseline": "evidence", "both": "evidence-and-merge"}
 ASTREA_FAILURE_POLICIES = {"continue", "fail"}
-ASTREA_MERGE_TECHNIQUES = {"priority-llm", "restrictive"}
+ASTREA_MERGE_STRATEGIES = {"generated-priority", "restrictive"}
+ASTREA_MERGE_STRATEGY_ALIASES = {"priority-llm": "generated-priority"}
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -57,22 +64,25 @@ def normalize_workflow_payload(payload: Mapping[str, Any] | None) -> Dict[str, A
     _set_if_present(request, "rule_number", rule.get("number"))
     _set_if_present(request, "rule_title", rule.get("title"))
 
-    guide = _mapping(request.get("guide"))
-    _set_if_present(request, "guide_content", guide.get("content"))
+    batch = _mapping(request.get("batch"))
+    _set_if_present(request, "batch_content", batch.get("content"))
     _set_if_present(
         request,
-        "guide_filename",
-        guide.get("filename") or guide.get("name"),
+        "batch_filename",
+        batch.get("filename") or batch.get("name"),
     )
 
     generation = _mapping(request.get("generation"))
     generation_fields = {
         "domain_context": "domain_context",
+        "generation_guidance": "generation_guidance",
         "guidance": "generation_guidance",
         "prefixes": "prefixes",
         "base_namespace": "base_namespace",
         "shape_namespace": "shape_namespace",
         "shape_prefix": "shape_prefix",
+        "llm_review": "llm_review",
+        "review_max_attempts": "review_max_attempts",
     }
     for public_key, application_key in generation_fields.items():
         _set_if_present(request, application_key, generation.get(public_key))
@@ -121,7 +131,7 @@ def normalize_workflow_payload(payload: Mapping[str, Any] | None) -> Dict[str, A
     _set_if_present(
         request,
         "astrea_merge_technique",
-        astrea.get("merge_technique") or astrea.get("merge_mode"),
+        astrea.get("merge_strategy") or astrea.get("merge_technique") or astrea.get("merge_mode"),
     )
     _set_if_present(request, "astrea_failure_policy", astrea.get("failure_policy"))
     _set_if_present(request, "astrea_baseline", astrea.get("baseline"))
@@ -137,6 +147,18 @@ def _normalized_choice(value: Any, choices: set[str], field: str, default: str) 
     return normalized
 
 
+def _normalized_alias_choice(
+    value: Any,
+    choices: set[str],
+    aliases: Mapping[str, str],
+    field: str,
+    default: str,
+) -> str:
+    normalized = str(value or default).strip().lower()
+    normalized = aliases.get(normalized, normalized)
+    return _normalized_choice(normalized, choices, field, default)
+
+
 def _baseline_payload(result: Mapping[str, Any]) -> Dict[str, str]:
     return {
         "name": str(result.get("name") or "astrea.ttl"),
@@ -149,9 +171,10 @@ def _prepare_astrea(
     *,
     baseline_generator: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> Dict[str, Any]:
-    requested_mode = _normalized_choice(
+    requested_mode = _normalized_alias_choice(
         request.get("astrea_use_mode"),
         ASTREA_USE_MODES,
+        ASTREA_USE_MODE_ALIASES,
         "astrea.mode",
         "none",
     )
@@ -161,7 +184,11 @@ def _prepare_astrea(
         "astrea.failure_policy",
         "continue",
     )
-    request["astrea_use_mode"] = requested_mode
+    internal_mode = {
+        "evidence": "baseline",
+        "evidence-and-merge": "both",
+    }.get(requested_mode, requested_mode)
+    request["astrea_use_mode"] = internal_mode
     status = {
         "requested_mode": requested_mode,
         "effective_mode": requested_mode,
@@ -199,7 +226,7 @@ def _prepare_astrea(
             "message": str(result.get("message") or "Astrea baseline generated."),
         })
         return status
-    except (AstreaUnavailableError, AstreaResponseError) as exc:
+    except (AstreaUnavailableError, AstreaRateLimitError, AstreaResponseError) as exc:
         if failure_policy == "fail":
             raise
         request["astrea_use_mode"] = "none"
@@ -207,55 +234,66 @@ def _prepare_astrea(
             "effective_mode": "none",
             "available": False,
             "error_type": (
-                "astrea_unavailable"
-                if isinstance(exc, AstreaUnavailableError)
-                else "astrea_response"
+                "astrea_rate_limited"
+                if isinstance(exc, AstreaRateLimitError)
+                else (
+                "astrea_timeout"
+                if isinstance(exc, AstreaTimeoutError)
+                else (
+                    "astrea_unavailable"
+                    if isinstance(exc, AstreaUnavailableError)
+                    else "astrea_response"
+                )
+                )
             ),
             "message": f"{exc} Continuing without Astrea.",
         })
         return status
 
 
-def generate_guide_workflow(
+def generate_batch_workflow(
     payload: Mapping[str, Any],
     *,
     event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-    generator: Callable[..., Dict[str, Any]] = generate_guide_shapes,
+    generator: Callable[..., Dict[str, Any]] = generate_batch_shapes,
     baseline_generator: Callable[[Dict[str, Any]], Dict[str, Any]] = generate_astrea_baseline,
     merger: Callable[[Dict[str, Any]], Dict[str, Any]] = merge_shapes,
 ) -> Dict[str, Any]:
-    """Run ontology-to-guide generation and optional Astrea merge in one call."""
+    """Run ontology-to-batch generation and optional Astrea merge in one call."""
     request = normalize_workflow_payload(payload)
     if not str(request.get("ontology_content") or "").strip():
         raise ValueError("ontology.content is required.")
-    if not str(request.get("guide_content") or "").strip():
-        raise ValueError("guide.content is required.")
+    if not str(request.get("batch_content") or "").strip():
+        raise ValueError("batch.content is required.")
 
     request.setdefault("ontology_filename", "ontology.ttl")
-    request.setdefault("guide_filename", "business_rules.md")
+    request.setdefault("batch_filename", "business_rules.md")
     astrea_status = _prepare_astrea(request, baseline_generator=baseline_generator)
     generation = generator(request, event_callback=event_callback)
 
     merge_result = None
     final_shape_document = str(generation.get("shape_document") or "")
-    if astrea_status["effective_mode"] in {"merge", "both"}:
-        technique = _normalized_choice(
+    if astrea_status["effective_mode"] in {"merge", "evidence-and-merge"}:
+        merge_strategy = _normalized_alias_choice(
             request.get("astrea_merge_technique"),
-            ASTREA_MERGE_TECHNIQUES,
-            "astrea.merge_technique",
-            "priority-llm",
+            ASTREA_MERGE_STRATEGIES,
+            ASTREA_MERGE_STRATEGY_ALIASES,
+            "astrea.merge_strategy",
+            "generated-priority",
         )
         merge_payload = {
             **request,
             "generated_shapes": final_shape_document,
             "generated_filename": "shard_shapes.ttl",
-            "technique": technique,
+            "technique": (
+                "priority-llm" if merge_strategy == "generated-priority" else merge_strategy
+            ),
         }
         merge_result = merger(merge_payload)
         final_shape_document = str(merge_result.get("shape_document") or "")
 
     return {
-        "workflow": "guide-to-shapes",
+        "workflow": "batch-to-shapes",
         "summary": generation.get("summary") or {},
         "generation": generation,
         "astrea": astrea_status,
@@ -264,7 +302,7 @@ def generate_guide_workflow(
     }
 
 
-def _single_rule_guide(number: str, title: str, text: str) -> str:
+def _single_rule_batch(number: str, title: str, text: str) -> str:
     paragraphs = "".join(
         f"<p>{escape(paragraph.strip())}</p>"
         for paragraph in str(text or "").splitlines()
@@ -277,7 +315,7 @@ def _single_rule_guide(number: str, title: str, text: str) -> str:
         '<section class="rule">'
         f'<p class="number">Number: {escape(number)}</p>'
         f'<p class="title">Title: {escape(title)}</p>'
-        f'<div class="business-rule">{paragraphs}</div>'
+        f'<div class="data-constraint">{paragraphs}</div>'
         "</section></body></html>"
     )
 
@@ -286,21 +324,21 @@ def generate_rule_workflow(
     payload: Mapping[str, Any],
     *,
     event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-    generator: Callable[..., Dict[str, Any]] = generate_guide_shapes,
+    generator: Callable[..., Dict[str, Any]] = generate_batch_shapes,
     baseline_generator: Callable[[Dict[str, Any]], Dict[str, Any]] = generate_astrea_baseline,
     merger: Callable[[Dict[str, Any]], Dict[str, Any]] = merge_shapes,
 ) -> Dict[str, Any]:
-    """Resolve and generate one business rule through the shared guide pipeline."""
+    """Resolve and generate one data constraint through the shared batch pipeline."""
     request = normalize_workflow_payload(payload)
     text = str(request.get("business_rule") or "").strip()
     if not text:
         raise ValueError("rule.text is required.")
 
     number = str(request.get("rule_number") or "RULE-001").strip()
-    title = str(request.get("rule_title") or "Business rule").strip()
-    request["guide_content"] = _single_rule_guide(number, title, text)
-    request["guide_filename"] = "single_rule.html"
-    result = generate_guide_workflow(
+    title = str(request.get("rule_title") or "Data constraint").strip()
+    request["batch_content"] = _single_rule_batch(number, title, text)
+    request["batch_filename"] = "single_rule.html"
+    result = generate_batch_workflow(
         request,
         event_callback=event_callback,
         generator=generator,

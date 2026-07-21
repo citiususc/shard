@@ -21,7 +21,12 @@ def merge_shapes(payload):
     if not astrea_content.strip():
         raise ValueError("Generate an Astrea baseline before using a merge strategy.")
 
-    technique = str(payload.get("technique") or payload.get("merge_mode") or "").strip().lower()
+    technique = str(
+        payload.get("merge_strategy")
+        or payload.get("technique")
+        or payload.get("merge_mode")
+        or ""
+    ).strip().lower()
     merged = merge_shape_documents(
         astrea_content,
         generated,

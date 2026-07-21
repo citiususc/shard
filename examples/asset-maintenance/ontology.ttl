@@ -7,7 +7,7 @@
 ex:AssetMaintenanceOntology
     a owl:Ontology ;
     rdfs:label "Asset maintenance ontology" ;
-    rdfs:comment "A compact ontology for testing business-rule to SHACL generation." .
+    rdfs:comment "A compact ontology for testing data-constraint to SHACL generation." .
 
 ex:Asset
     a owl:Class ;
