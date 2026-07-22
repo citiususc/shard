@@ -94,6 +94,11 @@
   font-weight: 700;
 }
 
+.astrea-baseline-status.astrea-status-warning {
+  color: var(--warn);
+  font-weight: 700;
+}
+
 @media (min-width: 1061px) {
   body.rule-page,
   body.batch-page {

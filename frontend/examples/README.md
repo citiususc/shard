@@ -21,9 +21,26 @@ at commit `9e94a4e4679f9a52cd6290386f23a332de2f5ff6`.
   included in each entry title to provide precise grounding metadata while the
   source descriptions remain unchanged.
 
-The embedded ontology combines the eProcurement Ontology 5.2.0 modules and
-RDFS restriction modules distributed with that dataset. This keeps the
-ontology vocabulary and reference constraints on the same version.
+Both sessions embed `epo-5.2.0-shard-demo-subset.ttl`, a reduced demonstration
+subset derived from the eProcurement Ontology 5.2.0 modules and restriction
+modules distributed with the dataset. The standalone TTL is the canonical
+copy; embedding it in each session keeps the examples fully importable through
+the standard SHARD session path.
+
+The subset contains 151 catalogued terms: 81 classes and 70 properties. Forty
+properties are required by the eleven selected data constraints, while thirty
+additional properties provide plausible lexical, domain and range alternatives
+for non-trivial grounding. Property domains and ranges, OWL union expressions,
+named class hierarchies, labels, definitions and applicable focus-class
+restrictions are retained. The subset has its own ontology IRI, does not import
+the complete ePO distribution, and must not be presented as the complete ePO
+ontology.
+
+To update the subset, start from the same combined ePO 5.2.0 source used by the
+NL2SHACL dataset, retain the required and distractor term sets documented by
+the regression tests, close the selection over domains, ranges and named
+superclasses, and regenerate both session ontology catalogs with SHARD's
+`parse_ontology` function.
 
 ## Attribution and licenses
 

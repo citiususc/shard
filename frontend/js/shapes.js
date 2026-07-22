@@ -156,10 +156,28 @@ const ASTREA_MERGE_TECHNIQUES = new Set(["generated-priority", "restrictive"]);
 let astreaGenerationPromise = null;
 let astreaControlState = "idle";
 let astreaControlMessage = "";
+let volatileAstreaBaselines = {};
 
 function astreaBaselineCache() {
   const stored = loadJSON(STORE.astreaBaselines, {});
-  return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  const persistent = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  return { ...persistent, ...volatileAstreaBaselines };
+}
+
+function persistAstreaBaselineCache(cache) {
+  // Older versions stored the active baseline twice, which could exhaust localStorage.
+  removeStoredValue(STORE.astreaBaseline);
+  try {
+    saveJSON(STORE.astreaBaselines, cache);
+    volatileAstreaBaselines = {};
+    return true;
+  } catch (error) {
+    if (error && (error.name === "QuotaExceededError" || error.code === 22)) {
+      volatileAstreaBaselines = { ...cache };
+      return false;
+    }
+    throw error;
+  }
 }
 
 function normalizedAstreaBaseline(value) {
@@ -174,7 +192,9 @@ function migrateLegacyAstreaBaseline() {
   const cache = astreaBaselineCache();
   if (!cache[legacy.ontologyHash]) {
     cache[legacy.ontologyHash] = legacy;
-    saveJSON(STORE.astreaBaselines, cache);
+    persistAstreaBaselineCache(cache);
+  } else {
+    removeStoredValue(STORE.astreaBaseline);
   }
 }
 
@@ -190,7 +210,7 @@ function importAstreaBaselines(values) {
     const baseline = normalizedAstreaBaseline(value);
     if (baseline) cache[baseline.ontologyHash] = baseline;
   });
-  saveJSON(STORE.astreaBaselines, cache);
+  persistAstreaBaselineCache(cache);
 }
 
 function getAstreaBaseline() {
@@ -205,17 +225,16 @@ function setAstreaBaseline(value) {
   const cache = astreaBaselineCache();
   if (baseline) {
     cache[baseline.ontologyHash] = baseline;
-    saveJSON(STORE.astreaBaselines, cache);
-    saveJSON(STORE.astreaBaseline, baseline);
-    return;
+    return persistAstreaBaselineCache(cache);
   }
 
   const ontology = getOntology();
   if (ontology && ontology.contentHash && cache[ontology.contentHash]) {
     delete cache[ontology.contentHash];
-    saveJSON(STORE.astreaBaselines, cache);
+    persistAstreaBaselineCache(cache);
   }
   removeStoredValue(STORE.astreaBaseline);
+  return true;
 }
 
 function migrateLegacyAstreaSettings() {
@@ -363,11 +382,40 @@ function renderAstreaBaselineControls() {
   status.title = message;
   status.className = "microcopy astrea-baseline-status" +
     (state === "error" ? " astrea-status-error" : "") +
+    (state === "warning" ? " astrea-status-warning" : "") +
     (state === "ready" ? " astrea-status-ready" : "");
+}
+
+function astreaViolationCount(validation = {}) {
+  const structured = Number(validation.violation_count);
+  if (Number.isFinite(structured) && structured >= 0) return structured;
+  const report = String(validation.report_text || validation.message || validation.error || "");
+  const resultCount = report.match(/Results\s*\((\d+)\)/i);
+  if (resultCount) return Number(resultCount[1]);
+  const occurrences = report.match(/Constraint Violation in /g);
+  return occurrences ? occurrences.length : 0;
+}
+
+function astreaProfileMessage(
+  validation = {},
+  { guardedMerge = false, evidenceAvailable = false } = {},
+) {
+  const count = astreaViolationCount(validation);
+  const countText = count ? `; ${count} violation${count === 1 ? "" : "s"} found` : "";
+  const policy = guardedMerge
+    ? " The baseline remains available as evidence. Focused merges are validated separately; non-conforming fragments are skipped."
+    : evidenceAvailable ? " The syntactically valid baseline remains available as generation evidence." : "";
+  return `Astrea generated the baseline, but it did not conform to the active SHACL-for-SHACL profile${countText}.${policy}`;
 }
 
 function astreaFailureMessage(error) {
   const payload = error && error.payload;
+  const validation = (payload && payload.validation)
+    || (payload && payload.details && payload.details.validation)
+    || null;
+  if (validation && (validation.error_type === "profile" || validation.profile_valid === false)) {
+    return astreaProfileMessage(validation);
+  }
   const code = String((payload && payload.code) || "");
   const detail = String(
     (payload && (payload.message || payload.error))
@@ -407,7 +455,20 @@ async function ensureAstreaBaseline() {
     setOntology(ontology);
   }
   const cached = currentAstreaBaseline();
-  if (cached) return cached;
+  if (cached) {
+    const mergeSafe = cached.mergeSafe !== false && cached.validation?.profile_valid !== false;
+    if (!mergeSafe) {
+      setAstreaControlMessage(
+        astreaProfileMessage(cached.validation || {}, {
+          guardedMerge: astreaUsesMerge(),
+          evidenceAvailable: true,
+        }),
+        "warning",
+      );
+      renderAstreaBaselineControls();
+    }
+    return { ...cached, mergeSafe };
+  }
   if (astreaGenerationPromise) return astreaGenerationPromise;
 
   setAstreaControlMessage("Generating baseline from the loaded ontology…", "busy");
@@ -442,15 +503,38 @@ async function ensureAstreaBaseline() {
         propertyShapeCount: result.property_shape_count || 0,
         partial: Boolean(result.partial),
         validation: result.validation || null,
+        evidenceSafe: result.evidence_safe !== false,
+        mergeSafe: result.merge_safe !== false && result.validation?.profile_valid !== false,
+        normalization: result.normalization || null,
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
         generatedAt: new Date().toISOString(),
       };
-      setAstreaBaseline(baseline);
+      const persisted = setAstreaBaseline(baseline);
       const qualifier = baseline.partial ? " (partial response)" : "";
-      setAstreaControlMessage(
-        `${baseline.shapeCount} Astrea shape(s) ready${qualifier}.`,
-        "ready",
-      );
-      setStatus(`Astrea ready · ${baseline.shapeCount}`);
+      if (!baseline.mergeSafe) {
+        setAstreaControlMessage(
+          astreaProfileMessage(baseline.validation || {}, {
+            guardedMerge: astreaUsesMerge(),
+            evidenceAvailable: true,
+          }),
+          "warning",
+        );
+        setStatus(astreaUsesMerge()
+          ? "Astrea evidence ready · guarded merge"
+          : "Astrea evidence ready");
+      } else if (!persisted) {
+        setAstreaControlMessage(
+          `${baseline.shapeCount} Astrea shape(s) ready${qualifier}. Browser storage is full; the baseline is available for this page but was not cached.`,
+          "warning",
+        );
+        setStatus(`Astrea ready · ${baseline.shapeCount} · not cached`);
+      } else {
+        setAstreaControlMessage(
+          `${baseline.shapeCount} Astrea shape(s) ready${qualifier}.`,
+          "ready",
+        );
+        setStatus(`Astrea ready · ${baseline.shapeCount}`);
+      }
       return baseline;
     } catch (error) {
       if (ontologyChanged) return null;
@@ -495,7 +579,15 @@ function wireAstreaBaselineControls() {
         return;
       }
       const baseline = await ensureAstreaBaseline();
-      if (baseline) setStatus(`Astrea ready · ${baseline.shapeCount}`);
+      if (baseline) {
+        if (baseline.mergeSafe === false) {
+          setStatus(astreaUsesMerge()
+            ? "Astrea evidence ready · guarded merge"
+            : "Astrea evidence ready");
+        } else {
+          setStatus(`Astrea ready · ${baseline.shapeCount}`);
+        }
+      }
     });
   }
   if (mergeControl) {

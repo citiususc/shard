@@ -346,6 +346,7 @@ input[type="radio"] { accent-color: var(--accent-strong); }
 .shape-support-pane + .shape-support-pane { border-left-color: var(--line); }
 .astrea-baseline-status.astrea-status-ready { color: var(--ok); }
 .astrea-baseline-status.astrea-status-error { color: var(--err); }
+.astrea-baseline-status.astrea-status-warning { color: var(--warn); }
 
 /* Search results and resolved ontology terms */
 .entity-card {

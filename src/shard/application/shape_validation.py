@@ -70,6 +70,28 @@ def _validation_scope_text(metadata):
         return f"generic SHACL for SHACL + domain profile ({names})"
     return "generic SHACL for SHACL"
 
+
+def _validation_result_counts(report_graph):
+    """Return stable severity counts from a pySHACL validation report."""
+    results = set(report_graph.subjects(RDF.type, SH.ValidationResult))
+    counts = {
+        "result_count": len(results),
+        "violation_count": 0,
+        "warning_count": 0,
+        "info_count": 0,
+    }
+    severity_keys = {
+        SH.Violation: "violation_count",
+        SH.Warning: "warning_count",
+        SH.Info: "info_count",
+    }
+    for result in results:
+        key = severity_keys.get(report_graph.value(result, SH.resultSeverity))
+        if key:
+            counts[key] += 1
+    return counts
+
+
 def validate_shape_content(shape, prefixes="", profiles=None):
     """Validate generated SHACL as Turtle and active SHACL for SHACL profiles."""
     domain_profiles = profiles or []
@@ -137,7 +159,7 @@ def validate_shape_content(shape, prefixes="", profiles=None):
         }
 
     try:
-        conforms, _report_graph, report_text = pyshacl_validate(
+        conforms, report_graph, report_text = pyshacl_validate(
             data_graph=data_graph,
             shacl_graph=shapes_graph,
             inference="rdfs",
@@ -159,12 +181,14 @@ def validate_shape_content(shape, prefixes="", profiles=None):
         }
 
     report_text = str(report_text or "").strip()
+    result_counts = _validation_result_counts(report_graph)
     if conforms:
         return {
             "valid": True,
             "syntax_valid": True,
             "profile_valid": True,
             **metadata,
+            **result_counts,
             "error": None,
             "error_type": "none",
             "report_text": report_text,
@@ -176,6 +200,7 @@ def validate_shape_content(shape, prefixes="", profiles=None):
         "syntax_valid": True,
         "profile_valid": False,
         **metadata,
+        **result_counts,
         "error": report_text[:5000] if report_text else "Shape validation profile reported non-conformance.",
         "report_text": report_text[:5000],
         "error_type": "profile",

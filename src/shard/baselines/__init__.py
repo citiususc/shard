@@ -10,6 +10,7 @@ from .evidence import (
 )
 from .io import (
     baseline_from_payload,
+    normalize_astrea_node_kinds,
     normalize_shacl_cardinalities,
     parse_baseline_shapes,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "focused_baseline_for_targets",
     "merge_shape_documents",
     "merge_shape_graphs",
+    "normalize_astrea_node_kinds",
     "normalize_shacl_cardinalities",
     "parse_baseline_shapes",
 ]

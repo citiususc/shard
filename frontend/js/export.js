@@ -96,7 +96,9 @@ function wireExport(buttonId) {
 /* ---------- session import / export ---------- */
 const SESSION_EXAMPLES_MANIFEST = "examples/manifest.json";
 const PENDING_SESSION_WORKSPACE = "shard.pendingSessionWorkspace";
+const WORKSPACE_RESET_MARKER = "shard.workspaceResetPending";
 let workspacePersistenceTimer = null;
+let workspacePersistenceSuspended = false;
 
 function workspaceStoreKey(workflow) {
   return workflow === "rule" ? STORE.ruleWorkspace
@@ -109,6 +111,7 @@ function persistedWorkspace(workflow) {
 }
 
 function persistWorkspace(options) {
+  if (workspacePersistenceSuspended) return;
   if (!options || typeof options.getWorkspaceState !== "function") return;
   const key = workspaceStoreKey(options.workflow);
   if (!key) return;
@@ -117,7 +120,34 @@ function persistWorkspace(options) {
 }
 
 function scheduleWorkspacePersistence() {
+  if (workspacePersistenceSuspended) return;
   document.dispatchEvent(new CustomEvent("shard-workspace-state-changed"));
+}
+
+function beginWorkspaceReset() {
+  workspacePersistenceSuspended = true;
+  if (workspacePersistenceTimer) {
+    clearTimeout(workspacePersistenceTimer);
+    workspacePersistenceTimer = null;
+  }
+  sessionStorage.setItem(WORKSPACE_RESET_MARKER, "1");
+}
+
+function restoreWorkspaceOnLoad(options) {
+  if (sessionStorage.getItem(WORKSPACE_RESET_MARKER) === "1") {
+    sessionStorage.removeItem(WORKSPACE_RESET_MARKER);
+    sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
+    if (options && typeof options.applyWorkspaceState === "function") {
+      options.applyWorkspaceState({ workflow: options.workflow });
+    }
+    return "reset";
+  }
+  if (restorePendingSessionWorkspace(options)) return "pending";
+  if (restorePersistedWorkspace(options)) return "persisted";
+  if (options && typeof options.applyWorkspaceState === "function") {
+    options.applyWorkspaceState({ workflow: options.workflow });
+  }
+  return "empty";
 }
 
 async function localModelIsDownloaded(modelId) {
@@ -442,15 +472,19 @@ function wireSessionControls(options = {}) {
   }
 
   const queuePersistence = () => {
+    if (workspacePersistenceSuspended) return;
     if (workspacePersistenceTimer) clearTimeout(workspacePersistenceTimer);
-    workspacePersistenceTimer = setTimeout(() => persistWorkspace(options), 180);
+    workspacePersistenceTimer = setTimeout(() => {
+      workspacePersistenceTimer = null;
+      persistWorkspace(options);
+    }, 180);
   };
   document.addEventListener("input", queuePersistence, true);
   document.addEventListener("change", queuePersistence, true);
   document.addEventListener("shard-workspace-state-changed", queuePersistence);
   window.addEventListener("beforeunload", () => persistWorkspace(options));
   queueMicrotask(() => {
-    if (!restorePendingSessionWorkspace(options)) restorePersistedWorkspace(options);
+    restoreWorkspaceOnLoad(options);
     queuePersistence();
   });
 }
@@ -496,15 +530,16 @@ function wireReset(buttonId) {
   if (!btn) return;
   btn.addEventListener("click", async () => {
     if (!confirm("Clear the entire workspace? This removes the ontology, accepted shapes, validation profiles, Astrea settings, and current work.")) return;
+    beginWorkspaceReset();
     const o = getOntology();
-    if (o) {
-      await cancelOntologyEmbeddingPreparation(activeOntologyEmbedding || {
+    const embeddingTarget = o
+      ? activeOntologyEmbedding || {
         ontologyHash: o.contentHash,
         embeddingModel: getModels().embeddingModel,
         configFingerprint: modelConfigFingerprint(),
         inferenceConfig: getInferenceConfig(),
-      });
-    }
+      }
+      : null;
     removeStoredValue(STORE.ontology);
     removeStoredValue(STORE.accepted);
     removeStoredValue(STORE.shapeProfiles);
@@ -516,6 +551,10 @@ function wireReset(buttonId) {
     removeStoredValue(STORE.ruleWorkspace);
     removeStoredValue(STORE.batchWorkspace);
     sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
-    location.reload();
+    try {
+      if (embeddingTarget) await cancelOntologyEmbeddingPreparation(embeddingTarget);
+    } finally {
+      location.reload();
+    }
   });
 }

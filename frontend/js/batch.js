@@ -96,6 +96,7 @@ function applyBatchWorkspaceState(workspace) {
   byId("domain-context").value = String(workspace.domainContext || "");
   byId("generation-guidance").value = String(workspace.generationGuidance || "");
   if (workspace.batch && workspace.batch.content) {
+    byId("batch-file").value = "";
     try {
       loadBatchDocument(
         workspace.batch.filename || "data_constraints.md",
@@ -106,6 +107,11 @@ function applyBatchWorkspaceState(workspace) {
       byId("batch-summary").textContent = `Invalid imported batch: ${error.message}`;
       byId("generate-batch").disabled = true;
     }
+  } else {
+    batchFile = null;
+    byId("batch-file").value = "";
+    byId("batch-summary").textContent = "No data-constraint batch loaded.";
+    byId("generate-batch").disabled = true;
   }
   queue = Array.isArray(workspace.queue) ? workspace.queue : [];
   activeIndex = Number.isInteger(workspace.activeIndex)

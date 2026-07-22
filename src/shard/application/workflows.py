@@ -191,8 +191,11 @@ def _prepare_astrea(
         "effective_mode": requested_mode,
         "failure_policy": failure_policy,
         "available": None,
+        "evidence_safe": None,
+        "merge_safe": None,
         "source": None,
         "name": None,
+        "warnings": [],
         "message": "Astrea was not requested.",
     }
     if requested_mode == "none":
@@ -215,11 +218,14 @@ def _prepare_astrea(
             raise AstreaResponseError("Astrea returned an empty SHACL document.")
         request["astrea_baseline"] = baseline
         status.update({
-            "available": True,
+            "available": bool(result.get("available", True)),
+            "evidence_safe": bool(result.get("evidence_safe", True)),
+            "merge_safe": bool(result.get("merge_safe", True)),
             "source": str(result.get("source") or "astrea-api"),
             "name": baseline["name"],
             "shape_count": result.get("shape_count"),
             "validation": result.get("validation"),
+            "warnings": list(result.get("warnings") or []),
             "message": str(result.get("message") or "Astrea baseline generated."),
         })
         return status

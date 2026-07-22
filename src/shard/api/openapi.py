@@ -255,6 +255,10 @@ def _response_example(operation: str, status: int) -> Optional[Dict[str, Any]]:
         "requested_mode": "none",
         "effective_mode": "none",
         "failure_policy": "continue",
+        "available": None,
+        "evidence_safe": None,
+        "merge_safe": None,
+        "warnings": [],
         "message": "Astrea was not requested.",
     }
     summary = {
@@ -398,10 +402,17 @@ def _response_example(operation: str, status: int) -> Optional[Dict[str, Any]]:
         },
         "baselines.astrea.generate": {
             **envelope,
-            "available": True, "source": "astrea-api", "name": "books_astrea.ttl",
+            "available": True, "evidence_safe": True, "merge_safe": True,
+            "source": "astrea-api", "name": "books_astrea.ttl",
             "size": len(BOOK_SHAPE), "ontology_hash": "sha256:books-example",
             "shape_document": BOOK_SHAPE, "shape_count": 1,
             "validation": valid_result,
+            "normalization": {
+                "candidate_shapes": 0, "normalized_shapes": 0,
+                "collapsed_shapes": 0, "unrestricted_shapes": 0,
+                "skipped_shapes": 0, "removed_values": 0,
+            },
+            "warnings": [],
             "message": "Astrea generated one validated baseline shape.",
         },
         "shapes.merge": {

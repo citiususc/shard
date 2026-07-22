@@ -212,6 +212,10 @@ class ValidationResult(ApiModel):
     domain_profile_count: int = 0
     domain_profile_names: List[str] = Field(default_factory=list)
     validation_level: str
+    result_count: int = Field(default=0, ge=0)
+    violation_count: int = Field(default=0, ge=0)
+    warning_count: int = Field(default=0, ge=0)
+    info_count: int = Field(default=0, ge=0)
     error: Optional[str] = None
     error_type: str = "none"
     report_text: str = ""
@@ -669,8 +673,19 @@ class ShapeExportResponse(AuthoringResponse, ValidationResult):
     statistics: ShapeExportStatistics
 
 
+class AstreaNormalization(ApiModel):
+    candidate_shapes: int = Field(default=0, ge=0)
+    normalized_shapes: int = Field(default=0, ge=0)
+    collapsed_shapes: int = Field(default=0, ge=0)
+    unrestricted_shapes: int = Field(default=0, ge=0)
+    skipped_shapes: int = Field(default=0, ge=0)
+    removed_values: int = Field(default=0, ge=0)
+
+
 class AstreaBaselineResponse(AuthoringResponse):
     available: bool
+    evidence_safe: bool = True
+    merge_safe: bool = True
     source: str
     name: str
     size: int
@@ -678,6 +693,8 @@ class AstreaBaselineResponse(AuthoringResponse):
     shape_document: str
     shape_count: int
     validation: ValidationResult
+    normalization: AstreaNormalization = Field(default_factory=AstreaNormalization)
+    warnings: List[str] = Field(default_factory=list)
     message: str
 
 
@@ -774,11 +791,14 @@ class AstreaStatus(ApiModel):
     effective_mode: Literal["none", "evidence", "merge", "evidence-and-merge"]
     failure_policy: Literal["continue", "fail"]
     available: Optional[bool] = None
+    evidence_safe: Optional[bool] = None
+    merge_safe: Optional[bool] = None
     source: Optional[str] = None
     name: Optional[str] = None
     shape_count: Optional[int] = None
     validation: Optional[ValidationResult] = None
     error_type: Optional[str] = None
+    warnings: List[str] = Field(default_factory=list)
     message: str
 
 
@@ -1129,6 +1149,7 @@ PUBLIC_MODELS = tuple(dict.fromkeys([
     ShapeValidationResponse,
     ShapeExportStatistics,
     ShapeExportResponse,
+    AstreaNormalization,
     AstreaBaselineResponse,
     ShapeMergeResponse,
     RuleWorkflowResponse,
@@ -1421,6 +1442,10 @@ def _canonical_validation(payload: Mapping[str, Any]) -> Dict[str, Any]:
         "domain_profile_count": int(payload.get("domain_profile_count") or 0),
         "domain_profile_names": [str(item) for item in payload.get("domain_profile_names") or []],
         "validation_level": str(payload.get("validation_level") or "syntax+generic"),
+        "result_count": int(payload.get("result_count") or 0),
+        "violation_count": int(payload.get("violation_count") or 0),
+        "warning_count": int(payload.get("warning_count") or 0),
+        "info_count": int(payload.get("info_count") or 0),
         "error": payload.get("error"),
         "error_type": str(payload.get("error_type") or "none"),
         "report_text": str(payload.get("report_text") or ""),
@@ -1439,11 +1464,14 @@ def _canonical_astrea_status(value: Mapping[str, Any]) -> Dict[str, Any]:
         "effective_mode": mode(value.get("effective_mode")),
         "failure_policy": str(value.get("failure_policy") or "continue"),
         "available": value.get("available"),
+        "evidence_safe": value.get("evidence_safe"),
+        "merge_safe": value.get("merge_safe"),
         "source": value.get("source"),
         "name": value.get("name"),
         "shape_count": value.get("shape_count"),
         "validation": _canonical_validation(validation) if isinstance(validation, Mapping) else None,
         "error_type": value.get("error_type"),
+        "warnings": [str(item) for item in value.get("warnings") or []],
         "message": str(value.get("message") or ""),
     }
 
@@ -1637,6 +1665,8 @@ def canonicalize_success(operation: str, payload: Mapping[str, Any]) -> Dict[str
     elif operation == "baselines.astrea.generate":
         result = {
             "available": bool(result.get("available")),
+            "evidence_safe": bool(result.get("evidence_safe", True)),
+            "merge_safe": bool(result.get("merge_safe", True)),
             "source": str(result.get("source") or "astrea-api"),
             "name": str(result.get("name") or "astrea.ttl"),
             "size": int(result.get("size") or 0),
@@ -1644,6 +1674,8 @@ def canonicalize_success(operation: str, payload: Mapping[str, Any]) -> Dict[str
             "shape_document": str(result.get("shape_document") or ""),
             "shape_count": int(result.get("shape_count") or 0),
             "validation": _canonical_validation(result.get("validation") or {}),
+            "normalization": dict(result.get("normalization") or {}),
+            "warnings": [str(item) for item in result.get("warnings") or []],
             "message": str(result.get("message") or ""),
         }
     elif operation == "shapes.merge":
