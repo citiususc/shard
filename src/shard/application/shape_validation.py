@@ -92,8 +92,13 @@ def _validation_result_counts(report_graph):
     return counts
 
 
-def validate_shape_content(shape, prefixes="", profiles=None):
-    """Validate generated SHACL as Turtle and active SHACL for SHACL profiles."""
+def validate_shape_content(shape, prefixes="", profiles=None, *, inference="rdfs"):
+    """Validate generated SHACL as Turtle and active SHACL for SHACL profiles.
+
+    The inference override is internal. Public validation retains RDFS inference;
+    large ontology-derived baseline graphs use ``none`` because the bundled
+    SHACL-for-SHACL profile does not require an inferred data-graph closure.
+    """
     domain_profiles = profiles or []
     try:
         generic_profile = _generic_validation_profile()
@@ -162,7 +167,7 @@ def validate_shape_content(shape, prefixes="", profiles=None):
         conforms, report_graph, report_text = pyshacl_validate(
             data_graph=data_graph,
             shacl_graph=shapes_graph,
-            inference="rdfs",
+            inference=inference,
             abort_on_first=False,
             allow_infos=True,
             allow_warnings=True,

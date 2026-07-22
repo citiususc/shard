@@ -145,7 +145,7 @@ def baseline_context_for_target(payload: Dict[str, Any], target: Dict[str, Any])
     use_mode = str(payload.get("astrea_use_mode") or "").strip().lower()
     if use_mode and use_mode not in {"baseline", "both"}:
         return ""
-    graph = payload.get("_astrea_graph")
+    graph = payload.get("_astrea_evidence_graph")
     if graph is None:
         content, filename = baseline_from_payload(payload)
         if not content.strip():
@@ -162,7 +162,7 @@ def baseline_context_for_targets(
     use_mode = str(payload.get("astrea_use_mode") or "").strip().lower()
     if use_mode and use_mode not in {"baseline", "both"}:
         return ""
-    graph = payload.get("_astrea_graph")
+    graph = payload.get("_astrea_evidence_graph")
     if graph is None:
         content, filename = baseline_from_payload(payload)
         if not content.strip():
@@ -179,11 +179,11 @@ def baseline_context_for_roles(
     use_mode = str(payload.get("astrea_use_mode") or "").strip().lower()
     if use_mode and use_mode not in {"baseline", "both"}:
         return ""
-    graph = payload.get("_astrea_graph")
+    graph = payload.get("_astrea_evidence_graph")
     if graph is None:
         content, filename = baseline_from_payload(payload)
         if not content.strip():
             return ""
         graph = parse_baseline_shapes(content, filename)
-        payload["_astrea_graph"] = graph
+        payload["_astrea_evidence_graph"] = graph
     return focused_baseline_for_roles(graph, target_roles)

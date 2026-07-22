@@ -406,7 +406,10 @@ def _response_example(operation: str, status: int) -> Optional[Dict[str, Any]]:
             "source": "astrea-api", "name": "books_astrea.ttl",
             "size": len(BOOK_SHAPE), "ontology_hash": "sha256:books-example",
             "shape_document": BOOK_SHAPE, "shape_count": 1,
+            "merge_shape_document": BOOK_SHAPE,
+            "quarantined_shape_document": "",
             "validation": valid_result,
+            "merge_validation": valid_result,
             "normalization": {
                 "candidate_shapes": 0, "normalized_shapes": 0,
                 "collapsed_shapes": 0, "unrestricted_shapes": 0,

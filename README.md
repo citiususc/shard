@@ -40,7 +40,12 @@ Domain profiles are always opt-in and are never inferred from the ontology.
 SHARD can send the current ontology to the Astrea REST API and use its response
 as structural generation evidence, as a rule-focused merge input, or both.
 Merging takes place before human review and is limited to the resolved focus
-nodes and constrained paths. Export serializes the accepted shapes exactly as
+nodes and constrained paths. Astrea output is normalized before generic SHACL
+for SHACL validation, including canonical SHACL literals and lossless repair of
+malformed RDF collections. The complete normalized document remains available as
+evidence, while merge consumes a separately validated conforming subset;
+fragments that cannot be repaired deterministically are quarantined and
+reported instead of being discarded silently. Export serializes the accepted shapes exactly as
 reviewed, removes only structurally identical anonymous constraints and checks
 that no distinct constraint was lost.
 

@@ -160,6 +160,7 @@ def _baseline_payload(result: Mapping[str, Any]) -> Dict[str, str]:
     return {
         "name": str(result.get("name") or "astrea.ttl"),
         "content": str(result.get("shape_document") or ""),
+        "merge_content": str(result.get("merge_shape_document") or ""),
     }
 
 
@@ -225,6 +226,8 @@ def _prepare_astrea(
             "name": baseline["name"],
             "shape_count": result.get("shape_count"),
             "validation": result.get("validation"),
+            "merge_validation": result.get("merge_validation"),
+            "normalization": result.get("normalization"),
             "warnings": list(result.get("warnings") or []),
             "message": str(result.get("message") or "Astrea baseline generated."),
         })

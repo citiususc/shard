@@ -313,7 +313,7 @@ function currentAstreaBaseline() {
 function astreaBaselinePayload() {
   const baseline = currentAstreaBaseline();
   if (!baseline) return null;
-  return {
+  const payload = {
     id: baseline.id,
     name: baseline.name,
     size: baseline.size,
@@ -321,6 +321,10 @@ function astreaBaselinePayload() {
     source: baseline.source,
     ontology_hash: baseline.ontologyHash,
   };
+  if (Object.prototype.hasOwnProperty.call(baseline, "mergeContent")) {
+    payload.merge_content = baseline.mergeContent || "";
+  }
+  return payload;
 }
 
 function astreaEvidencePayload() {
@@ -456,13 +460,27 @@ async function ensureAstreaBaseline() {
   }
   const cached = currentAstreaBaseline();
   if (cached) {
-    const mergeSafe = cached.mergeSafe !== false && cached.validation?.profile_valid !== false;
+    const hasSeparateMergeDocument = Boolean(cached.mergeContent);
+    const mergeSafe = cached.mergeSafe !== false && (
+      hasSeparateMergeDocument
+        ? cached.mergeValidation?.profile_valid !== false
+        : cached.validation?.profile_valid !== false
+    );
     if (!mergeSafe) {
       setAstreaControlMessage(
         astreaProfileMessage(cached.validation || {}, {
           guardedMerge: astreaUsesMerge(),
           evidenceAvailable: true,
         }),
+        "warning",
+      );
+      renderAstreaBaselineControls();
+    } else if (cached.validation?.profile_valid === false) {
+      const retained = Number(cached.normalization?.retained_shapes || 0);
+      const quarantined = Number(cached.normalization?.quarantined_shapes || 0);
+      setAstreaControlMessage(
+        `Astrea baseline normalized · ${retained} conforming fragment(s) ready for merge` +
+          (quarantined ? ` · ${quarantined} quarantined` : "") + ".",
         "warning",
       );
       renderAstreaBaselineControls();
@@ -496,6 +514,8 @@ async function ensureAstreaBaseline() {
         name: result.name || "astrea_baseline.ttl",
         size: result.size || result.shape_document.length,
         content: result.shape_document,
+        mergeContent: result.merge_shape_document || "",
+        quarantinedContent: result.quarantined_shape_document || "",
         source: "astrea-api",
         ontologyHash: result.ontology_hash || ontology.contentHash,
         shapeCount: result.shape_count || 0,
@@ -503,8 +523,11 @@ async function ensureAstreaBaseline() {
         propertyShapeCount: result.property_shape_count || 0,
         partial: Boolean(result.partial),
         validation: result.validation || null,
+        mergeValidation: result.merge_validation || null,
         evidenceSafe: result.evidence_safe !== false,
-        mergeSafe: result.merge_safe !== false && result.validation?.profile_valid !== false,
+        mergeSafe: result.merge_safe !== false &&
+          Boolean(result.merge_shape_document) &&
+          result.merge_validation?.profile_valid !== false,
         normalization: result.normalization || null,
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
         generatedAt: new Date().toISOString(),
@@ -522,6 +545,15 @@ async function ensureAstreaBaseline() {
         setStatus(astreaUsesMerge()
           ? "Astrea evidence ready · guarded merge"
           : "Astrea evidence ready");
+      } else if (baseline.validation?.profile_valid === false) {
+        const retained = Number(baseline.normalization?.retained_shapes || 0);
+        const quarantined = Number(baseline.normalization?.quarantined_shapes || 0);
+        setAstreaControlMessage(
+          `Astrea baseline normalized · ${retained} conforming fragment(s) ready for merge` +
+            (quarantined ? ` · ${quarantined} quarantined` : "") + ".",
+          "warning",
+        );
+        setStatus(`Astrea normalized · ${retained} merge-ready`);
       } else if (!persisted) {
         setAstreaControlMessage(
           `${baseline.shapeCount} Astrea shape(s) ready${qualifier}. Browser storage is full; the baseline is available for this page but was not cached.`,

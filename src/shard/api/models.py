@@ -225,6 +225,13 @@ class ValidationResult(ApiModel):
 class BaselineInput(ApiModel):
     name: str = "astrea.ttl"
     content: str = Field(min_length=1)
+    merge_content: Optional[str] = Field(
+        default=None,
+        description=(
+            "Normalized SHACL-for-SHACL-conforming subset used for merge. "
+            "When omitted, content is used for backward compatibility."
+        ),
+    )
 
 
 class AstreaOptions(ApiModel):
@@ -680,6 +687,21 @@ class AstreaNormalization(ApiModel):
     unrestricted_shapes: int = Field(default=0, ge=0)
     skipped_shapes: int = Field(default=0, ge=0)
     removed_values: int = Field(default=0, ge=0)
+    integer_literals_normalized: int = Field(default=0, ge=0)
+    boolean_literals_normalized: int = Field(default=0, ge=0)
+    string_literals_normalized: int = Field(default=0, ge=0)
+    malformed_list_nodes_repaired: int = Field(default=0, ge=0)
+    malformed_list_members_preserved: int = Field(default=0, ge=0)
+    numeric_parameters_collapsed: int = Field(default=0, ge=0)
+    boolean_parameters_collapsed: int = Field(default=0, ge=0)
+    list_parameters_merged: int = Field(default=0, ge=0)
+    datatype_parameters_conjoined: int = Field(default=0, ge=0)
+    pattern_parameters_conjoined: int = Field(default=0, ge=0)
+    qualified_shapes_conjoined: int = Field(default=0, ge=0)
+    severity_parameters_collapsed: int = Field(default=0, ge=0)
+    shape_types_repaired: int = Field(default=0, ge=0)
+    retained_shapes: int = Field(default=0, ge=0)
+    quarantined_shapes: int = Field(default=0, ge=0)
 
 
 class AstreaBaselineResponse(AuthoringResponse):
@@ -691,8 +713,11 @@ class AstreaBaselineResponse(AuthoringResponse):
     size: int
     ontology_hash: str
     shape_document: str
+    merge_shape_document: str = ""
+    quarantined_shape_document: str = ""
     shape_count: int
     validation: ValidationResult
+    merge_validation: ValidationResult
     normalization: AstreaNormalization = Field(default_factory=AstreaNormalization)
     warnings: List[str] = Field(default_factory=list)
     message: str
@@ -797,6 +822,8 @@ class AstreaStatus(ApiModel):
     name: Optional[str] = None
     shape_count: Optional[int] = None
     validation: Optional[ValidationResult] = None
+    merge_validation: Optional[ValidationResult] = None
+    normalization: Optional[AstreaNormalization] = None
     error_type: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
     message: str
@@ -1459,6 +1486,7 @@ def _canonical_astrea_status(value: Mapping[str, Any]) -> Dict[str, Any]:
         return {"baseline": "evidence", "both": "evidence-and-merge"}.get(normalized, normalized)
 
     validation = value.get("validation")
+    merge_validation = value.get("merge_validation")
     return {
         "requested_mode": mode(value.get("requested_mode")),
         "effective_mode": mode(value.get("effective_mode")),
@@ -1470,6 +1498,12 @@ def _canonical_astrea_status(value: Mapping[str, Any]) -> Dict[str, Any]:
         "name": value.get("name"),
         "shape_count": value.get("shape_count"),
         "validation": _canonical_validation(validation) if isinstance(validation, Mapping) else None,
+        "merge_validation": (
+            _canonical_validation(merge_validation)
+            if isinstance(merge_validation, Mapping)
+            else None
+        ),
+        "normalization": value.get("normalization"),
         "error_type": value.get("error_type"),
         "warnings": [str(item) for item in value.get("warnings") or []],
         "message": str(value.get("message") or ""),
@@ -1672,8 +1706,15 @@ def canonicalize_success(operation: str, payload: Mapping[str, Any]) -> Dict[str
             "size": int(result.get("size") or 0),
             "ontology_hash": str(result.get("ontology_hash") or ""),
             "shape_document": str(result.get("shape_document") or ""),
+            "merge_shape_document": str(result.get("merge_shape_document") or ""),
+            "quarantined_shape_document": str(
+                result.get("quarantined_shape_document") or ""
+            ),
             "shape_count": int(result.get("shape_count") or 0),
             "validation": _canonical_validation(result.get("validation") or {}),
+            "merge_validation": _canonical_validation(
+                result.get("merge_validation") or result.get("validation") or {}
+            ),
             "normalization": dict(result.get("normalization") or {}),
             "warnings": [str(item) for item in result.get("warnings") or []],
             "message": str(result.get("message") or ""),

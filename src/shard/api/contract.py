@@ -171,7 +171,7 @@ ENDPOINTS: Tuple[EndpointSpec, ...] = (
         "baselines.astrea.generate", "POST", f"{API_PREFIX}/baselines/astrea",
         "/generate-astrea-baseline", "shape-assurance", PRIMARY_ROLE, "json",
         "Generate ontology-derived baseline shapes through the Astrea service.",
-        "Calls Astrea using the supplied ontology. A client-supplied baseline is represented by BaselineInput in workflows and merge requests and does not call Astrea.",
+        "Calls Astrea using the supplied ontology, normalizes repairable SHACL representation issues, and returns the complete evidence document, a separately validated merge subset, and any quarantined fragments. A client-supplied baseline is represented by BaselineInput in workflows and merge requests and does not call Astrea.",
     ),
     EndpointSpec(
         "shapes.merge", "POST", f"{API_PREFIX}/shapes/merge", "/merge-shapes",

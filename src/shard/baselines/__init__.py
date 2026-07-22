@@ -15,6 +15,12 @@ from .io import (
     parse_baseline_shapes,
 )
 from .merge import merge_shape_documents, merge_shape_graphs
+from .normalization import (
+    graph_copy,
+    normalize_astrea_graph,
+    quarantine_focus_nodes,
+    shape_roots,
+)
 
 __all__ = [
     "baseline_context_for_roles",
@@ -29,4 +35,8 @@ __all__ = [
     "normalize_astrea_node_kinds",
     "normalize_shacl_cardinalities",
     "parse_baseline_shapes",
+    "graph_copy",
+    "normalize_astrea_graph",
+    "quarantine_focus_nodes",
+    "shape_roots",
 ]

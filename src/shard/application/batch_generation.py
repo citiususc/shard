@@ -56,14 +56,14 @@ def prepare_astrea_graph(payload):
     use_mode = str(payload.get("astrea_use_mode") or "").strip().lower()
     if use_mode and use_mode not in {"baseline", "merge", "both"}:
         return None
-    graph = payload.get("_astrea_graph")
+    graph = payload.get("_astrea_evidence_graph")
     if graph is not None:
         return graph
     content, filename = baseline_from_payload(payload)
     if not content.strip():
         return None
     graph = parse_baseline_shapes(content, filename)
-    payload["_astrea_graph"] = graph
+    payload["_astrea_evidence_graph"] = graph
     return graph
 
 

@@ -134,7 +134,13 @@ function apiAstreaOptions() {
     merge_strategy: getAstreaMergeTechnique(),
     failure_policy: "continue",
     ...(baseline && baseline.content
-      ? { baseline: { name: baseline.name || "astrea.ttl", content: baseline.content } }
+      ? { baseline: {
+          name: baseline.name || "astrea.ttl",
+          content: baseline.content,
+          ...(Object.prototype.hasOwnProperty.call(baseline, "merge_content")
+            ? { merge_content: baseline.merge_content }
+            : {}),
+        } }
       : {}),
   };
 }

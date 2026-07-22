@@ -460,7 +460,7 @@ def _merge_astrea_for_rule(
         "strategy": strategy,
         "warnings": [],
     }
-    content, filename = baseline_from_payload(payload)
+    content, filename = baseline_from_payload(payload, purpose="merge")
     metadata["baseline_name"] = filename
     if not content.strip():
         metadata["warnings"].append(
@@ -468,10 +468,10 @@ def _merge_astrea_for_rule(
         )
         return generated_shape, metadata, None
 
-    graph = payload.get("_astrea_graph")
+    graph = payload.get("_astrea_merge_graph")
     if graph is None:
         graph = parse_baseline_shapes(content, filename)
-        payload["_astrea_graph"] = graph
+        payload["_astrea_merge_graph"] = graph
     focused = focused_baseline_for_roles(graph, target_roles)
     if not focused:
         metadata["warnings"].append(

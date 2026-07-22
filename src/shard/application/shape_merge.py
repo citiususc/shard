@@ -17,7 +17,7 @@ def merge_shapes(payload):
     )
     if not generated.strip():
         raise ValueError("Missing generated SHACL content to merge.")
-    astrea_content, astrea_filename = baseline_from_payload(payload)
+    astrea_content, astrea_filename = baseline_from_payload(payload, purpose="merge")
     if not astrea_content.strip():
         raise ValueError("Generate an Astrea baseline before using a merge strategy.")
 

@@ -338,6 +338,26 @@ Call `/baselines/astrea` to invoke the external service. Supplying
 `astrea.baseline` in a workflow or `baseline` in `/shapes/merge` uses a
 client-provided document and does not call Astrea.
 
+Astrea output passes through a conservative RDF normalization phase before
+generic SHACL for SHACL validation. It canonicalizes SHACL integer, boolean and
+string parameter literals; folds Astrea node-kind alternatives; combines
+repeated numeric, boolean, list, pattern, datatype and qualified-shape
+parameters without weakening their effective constraints; linearizes malformed
+RDF collections while preserving every list member; and repairs shape typing
+only when the structural role is unambiguous. The response distinguishes:
+
+- `shape_document`: the complete normalized baseline used as evidence;
+- `merge_shape_document`: the generic-profile-conforming subset used by merge;
+- `quarantined_shape_document`: non-conforming fragments retained for audit;
+- `validation` and `merge_validation`: validation results for the first two
+  documents respectively.
+
+If deterministic normalization cannot make a fragment conform, SHARD removes
+only that fragment from the merge view. It remains present in the evidence and
+quarantine documents. `BaselineInput.merge_content` transports the safe merge
+view to workflows; older clients that omit it retain the former behavior and
+use `content` for both purposes.
+
 ## Errors
 
 Every canonical error has one shape:
