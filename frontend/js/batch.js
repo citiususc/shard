@@ -23,6 +23,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireAstreaBaselineControls();
   attachTurtleHighlighter("shape-editor", "shape-editor-hl");
   attachTurtleHighlighter("prefixes-editor", "prefixes-editor-hl");
+  wireExpandableCodeEditors();
   wireOntologyControls(() => { void refreshAstreaBaselineForOntology(); });
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
   wireAcceptedShapesControls(

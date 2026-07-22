@@ -12,7 +12,7 @@
   --line: #d7e1e9;
   --line-strong: #b8c7d4;
   --code-bg: #071729;
-  --code-ink: #d9e7f3;
+  --code-ink: #ffffff;
   --accent: #00aeb8;
   --accent-strong: #008b96;
   --accent-soft: #e3f7f7;
@@ -431,12 +431,135 @@ input[type="radio"] { accent-color: var(--accent-strong); }
 .code-highlight { color: var(--code-ink); }
 .code-editor { caret-color: #45d6dc; }
 .code-wrap .code-editor::selection { background: rgba(0, 200, 209, 0.26); }
-.tk-comment { color: #7890a6; }
-.tk-string { color: #8ed8e4; }
-.tk-iri { color: #58d7b8; }
+
+/* Expanded Turtle editors */
+.editor-expand-button,
+.shape-editor-actions .editor-expand-button,
+.editor-modal-close {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  line-height: 1;
+}
+body.app-page .editor-column > .section-block > .section-title button.editor-expand-button,
+body.app-page .editor-column .section-title-actions button.editor-expand-button {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+body.app-page .editor-modal-close {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+.editor-expand-button svg,
+.editor-modal-close svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.editor-modal {
+  width: min(1120px, calc(100vw - 32px));
+  max-width: none;
+  height: min(82vh, 840px);
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  overflow: visible;
+}
+.editor-modal::backdrop {
+  background: rgba(5, 18, 39, 0.58);
+  backdrop-filter: blur(3px);
+}
+.editor-modal-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 28px 80px rgba(5, 18, 39, 0.28);
+}
+.editor-modal-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 54px;
+  padding: 11px 14px 11px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.editor-modal-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-modal .editor-modal-code-wrap {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+}
+.editor-modal .code-highlight,
+.editor-modal .editor-modal-code-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0 0 12px 12px;
+  padding: 20px;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+.editor-modal .editor-modal-code-editor {
+  resize: none;
+}
+.prefixes-block .code-editor,
+.shape-editor-block .code-editor {
+  resize: none;
+}
+
+@media (max-width: 700px) {
+  .editor-modal {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    max-height: none;
+  }
+  .editor-modal-header { min-height: 48px; padding: 8px 10px 8px 14px; }
+  .editor-modal .code-highlight,
+  .editor-modal .editor-modal-code-editor { padding: 14px; font-size: 0.82rem; }
+}
+.tk-comment { color: #9aabba; }
+.tk-string { color: #a7f3d0; }
+.tk-iri { color: #67e8f9; }
 .tk-directive,
-.tk-kw { color: #ff8d8d; }
-.tk-pname { color: #8fb8ff; }
+.tk-kw { color: #ff9f80; }
+.tk-prefix-decl { color: #fbbf24; }
+.tk-shacl { color: #ffb86c; }
+.tk-vocab { color: #c4b5fd; }
+.tk-shape { color: #f0abfc; }
+.tk-ontology { color: #7dd3fc; }
 .tk-bool,
 .tk-num { color: #f5c66b; }
 .tk-lang { color: #f3a86f; }

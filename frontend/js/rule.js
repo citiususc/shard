@@ -37,6 +37,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // prefixes editor refreshes when its value is seeded).
   attachTurtleHighlighter("shape-editor", "shape-editor-hl");
   attachTurtleHighlighter("prefixes-editor", "prefixes-editor-hl");
+  wireExpandableCodeEditors();
 
   wireOntologyControls(() => {
     clearSemanticResults(false);

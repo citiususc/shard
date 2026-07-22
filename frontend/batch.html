@@ -240,7 +240,12 @@
             <section class="section-block prefixes-block">
               <div class="section-title">
                 <h2>Prefixes in scope</h2>
-                <button id="reset-prefixes" class="text-button">Reset</button>
+                <div class="section-title-actions">
+                  <button id="reset-prefixes" class="text-button">Reset</button>
+                  <button class="icon-button editor-expand-button" type="button" data-expand-editor="prefixes-editor" data-expand-title="Prefixes in scope" title="Expand prefixes editor" aria-label="Expand prefixes editor">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" x2="14" y1="3" y2="10"></line><line x1="3" x2="10" y1="21" y2="14"></line></svg>
+                  </button>
+                </div>
               </div>
               <div class="code-wrap">
                 <pre class="code-highlight" aria-hidden="true"><code id="prefixes-editor-hl"></code></pre>
@@ -263,6 +268,9 @@
                   <button id="copy-shape" class="secondary-button">Copy</button>
                   <button id="validate-shape" class="secondary-button">Check</button>
                   <button id="accept-shape" class="primary-button">Accept</button>
+                  <button class="icon-button editor-expand-button" type="button" data-expand-editor="shape-editor" data-expand-title-target="editor-title" title="Expand shape editor" aria-label="Expand shape editor">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" x2="14" y1="3" y2="10"></line><line x1="3" x2="10" y1="21" y2="14"></line></svg>
+                  </button>
                 </div>
               </div>
               <div class="code-wrap">
