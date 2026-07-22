@@ -149,6 +149,8 @@ function wireShapeValidationProfileControls() {
 }
 
 /* ---------- Astrea baseline evidence + rule-focused merge ---------- */
+const ASTREA_BASELINE_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+
 const ASTREA_USE_MODES = new Set(["none", "evidence", "merge", "evidence-and-merge"]);
 const ASTREA_MERGE_TECHNIQUES = new Set(["generated-priority", "restrictive"]);
 let astreaGenerationPromise = null;
@@ -366,11 +368,27 @@ function renderAstreaBaselineControls() {
 
 function astreaFailureMessage(error) {
   const payload = error && error.payload;
-  if (payload && payload.error_type === "astrea_unavailable") {
-    return "Astrea is currently unavailable. Astrea use was set to No.";
+  const code = String((payload && payload.code) || "");
+  const detail = String(
+    (payload && (payload.message || payload.error))
+    || (error && error.message)
+    || "",
+  ).trim();
+  const suffix = detail ? ` ${detail}` : "";
+
+  if (code === "ASTREA_REQUEST_TIMEOUT" || /timed out/i.test(detail)) {
+    return `Astrea did not finish before the configured timeout. Astrea use was set to No.${suffix}`;
   }
-  const detail = payload && (payload.error || payload.message);
-  return `Astrea could not generate a usable baseline. Astrea use was set to No.${detail ? ` ${detail}` : ""}`;
+  if (code === "ASTREA_RATE_LIMIT_EXCEEDED") {
+    return `Astrea rate limited the request. Astrea use was set to No.${suffix}`;
+  }
+  if (code === "ASTREA_UNAVAILABLE" || (payload && payload.error_type === "astrea_unavailable")) {
+    return `Astrea is currently unavailable. Astrea use was set to No.${suffix}`;
+  }
+  if (code === "ASTREA_INVALID_RESPONSE") {
+    return `Astrea returned no usable SHACL baseline. Astrea use was set to No.${suffix}`;
+  }
+  return `Astrea could not generate a usable baseline. Astrea use was set to No.${suffix}`;
 }
 
 async function ensureAstreaBaseline() {
@@ -400,7 +418,10 @@ async function ensureAstreaBaseline() {
       const result = await fetchJSON(SERVICES.astrea, {
         method: "POST",
         body: JSON.stringify({ ontology: apiOntologyInput(ontology) }),
-      }, { label: "Generate Astrea baseline", timeoutMs: 150000 });
+      }, {
+        label: "Generate Astrea baseline",
+        timeoutMs: ASTREA_BASELINE_REQUEST_TIMEOUT_MS,
+      });
       if (!result.available || !result.shape_document) {
         throw new Error(result.error || "Astrea returned no baseline shapes.");
       }

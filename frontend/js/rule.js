@@ -563,6 +563,9 @@ async function generateShape() {
         level: "info", stage: "astrea", indent: 1,
         message: `Preparing Astrea · ${requestedAstreaMode}`,
       });
+      setStatus("Preparing Astrea baseline…");
+      panel.className = "validation-panel backend";
+      panel.textContent = "Preparing the ontology-derived Astrea baseline before shape generation…";
       const baseline = await ensureAstreaBaseline();
       appendExecutionEntry(ruleGenerationLogId, {
         level: baseline ? "pass" : "warn", stage: "astrea", indent: 1,
