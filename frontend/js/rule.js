@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireModelControls();
   wireShapeValidationProfileControls();
   wireAstreaBaselineControls();
-  wireExport("export-shapes", () => "");
+  wireExport("export-shapes");
   renderAccepted(byId("accepted-list"), byId("coverage-tag"));
   wireAcceptedShapesControls(
     byId("accepted-list"),
@@ -72,7 +72,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("validate-shape").addEventListener("click", checkShape);
   byId("accept-shape").addEventListener("click", acceptCurrent);
   byId("copy-shape").addEventListener("click", async () => {
+    const button = byId("copy-shape");
     const ok = await copyToClipboard(byId("shape-editor").value);
+    showCopyFeedback(button, ok);
     setStatus(ok ? "Copied" : "Copy failed");
   });
   renderResolvedTerms();
@@ -89,6 +91,13 @@ function ruleWorkspaceState() {
       title: activeRuleMetadata.title,
       text: byId("business-rule").value,
     },
+    editableShape: byId("shape-editor").value,
+    targetRoles,
+    resolutionMeta,
+    candidates: lastCandidates,
+    semanticSearchActive,
+    entityFilter,
+    ontologySearch: byId("entity-search").value,
   };
 }
 
@@ -101,6 +110,27 @@ function applyRuleWorkspaceState(workspace) {
     title: String(constraint.title || DEFAULT_RULE_METADATA.title),
   };
   byId("business-rule").value = String(constraint.text || "");
+  byId("shape-editor").value = String(workspace.editableShape || "");
+  targetRoles = workspace.targetRoles && typeof workspace.targetRoles === "object"
+    ? workspace.targetRoles : emptyTargetRoles();
+  TARGET_ROLE_KEYS.forEach((role) => {
+    if (!Array.isArray(targetRoles[role])) targetRoles[role] = [];
+  });
+  resolutionMeta = workspace.resolutionMeta && typeof workspace.resolutionMeta === "object"
+    ? workspace.resolutionMeta
+    : { resolvedBy: "", resolutionScore: null, scoreKind: "none" };
+  lastCandidates = Array.isArray(workspace.candidates) ? workspace.candidates : [];
+  semanticSearchActive = Boolean(workspace.semanticSearchActive && lastCandidates.length);
+  entityFilter = ["all", "class", "property"].includes(workspace.entityFilter)
+    ? workspace.entityFilter : "all";
+  document.querySelectorAll("[data-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.filter === entityFilter);
+  });
+  byId("entity-search").value = String(workspace.ontologySearch || "");
+  renderResolvedTerms();
+  renderEntities();
+  refreshHighlight("shape-editor");
+  updateGenerateAvailability();
 }
 
 function activeBusinessRule(text) {
@@ -314,6 +344,7 @@ function renderResolvedTerms() {
     ? "Generate SHACL shape"
     : "Resolve and generate SHACL shape";
   updateGenerateAvailability();
+  scheduleWorkspacePersistence();
 }
 
 function updateGenerateAvailability() {
@@ -578,6 +609,7 @@ async function generateShape() {
     });
     byId("shape-editor").value = data.shape_document || "";
     refreshHighlight("shape-editor");
+    scheduleWorkspacePersistence();
     if (data.logs) {
       appendExecutionEntry(ruleGenerationLogId, {
         level: "debug", stage: "backend", indent: 1,
@@ -603,6 +635,16 @@ async function generateShape() {
           level: "pass", stage: "review", indent: 1,
           message: semanticReviewSummary(data),
           details: semanticReviewDetails(data),
+        });
+      }
+      if (data.astrea_merge) {
+        const merge = data.astrea_merge;
+        appendExecutionEntry(ruleGenerationLogId, {
+          level: merge.applied ? "pass" : "warn", stage: "astrea", indent: 1,
+          message: merge.applied
+            ? `Matching Astrea fragment merged before review · ${merge.strategy}`
+            : "Astrea merge not applied",
+          details: (merge.warnings || []).join("\n"),
         });
       }
       appendExecutionEntry(ruleGenerationLogId, {

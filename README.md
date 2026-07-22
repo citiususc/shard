@@ -1,235 +1,216 @@
 # SHARD
 
-**An Interactive Workbench for Ontology-Grounded SHACL Authoring from Data Constraints**
+**Interactive Ontology-Grounded SHACL Authoring from Natural-Language Data Constraints**
 
-SHARD is a local and web application for generating reviewable SHACL shapes
-from an OWL/RDF ontology and data constraints written in natural language. It
-keeps a human in the loop: generated Turtle can be inspected, edited,
-validated, accepted and exported.
+SHARD is an interactive workbench for generating reviewable SHACL shapes from
+an OWL/RDF ontology and natural-language data constraints. It keeps a human in
+the loop: ontology grounding can be reviewed, generated Turtle can be edited,
+and every accepted shape can be validated and exported.
 
-## Workflows
+Repository: <https://github.com/citiususc/shard>
+
+## Authoring Workflows
 
 ### Rule to Shape
 
 Write one data constraint and resolve its ontology context into focus nodes,
-constrained property paths and related terms. The proposed roles can be
-reviewed manually before SHARD generates one grounded constraint document.
+constrained property paths and related terms. The proposed roles remain
+editable before SHARD generates one grounded SHACL document.
 
 ### Batch to Shapes
 
-Upload a structured Markdown or HTML batch of data constraints. SHARD parses each
-rule, resolves it to role-grouped ontology terms through the `label -> semantic -> LLM`
-cascade, generates one coherent constraint document per resolved rule, and consolidates
-compatible property constraints under target-class NodeShapes. Progress is
-streamed per data constraint.
+Upload a structured Markdown or HTML batch. SHARD parses each data constraint,
+resolves it through the `label -> semantic -> LLM` cascade, generates one
+document per resolved constraint and consolidates compatible property
+constraints under their target-class NodeShapes. Progress is streamed per data
+constraint. Unresolved constraints and discarded candidates remain visible for
+human review.
 
-Rules that cannot be resolved and generated outputs that fail validation remain
-visible for review; SHARD does not force or silently discard them.
+## Validation and Baselines
 
-## Assurance
+Generated and imported shapes pass through:
 
-Every generated shape is checked at three complementary boundaries:
+1. Turtle/RDF syntax validation.
+2. Generic SHACL for SHACL validation using the bundled `shacl-shacl.ttl`.
+3. Optional user-supplied domain validation profiles.
+4. Ontology-grounding checks for SHACL target, path and class IRIs.
 
-1. Turtle/RDF syntax.
-2. Generic SHACL for SHACL validation with the bundled W3C `shacl-shacl.ttl`.
-3. Optional user-supplied domain profiles.
+Domain profiles are always opt-in and are never inferred from the ontology.
 
-Domain profiles are never inferred from an ontology. For example, the ERA
-profile under `profiles/era/` is opt-in and must not be applied to unrelated
-domains.
+SHARD can send the current ontology to the Astrea REST API and use its response
+as structural generation evidence, as a rule-focused merge input, or both.
+Merging takes place before human review and is limited to the resolved focus
+nodes and constrained paths. Export serializes the accepted shapes exactly as
+reviewed, removes only structurally identical anonymous constraints and checks
+that no distinct constraint was lost.
 
-SHARD also checks key SHACL IRIs against the uploaded ontology. When enabled,
-SHARD sends the ontology content to the Astrea REST API and uses the returned
-SHACL document as rule-focused structural evidence, as a final merge input,
-or both. Reviewed output can be exported with generated-shape priority or with
-the restrictive RDF-aware merge strategy. If Astrea is unavailable, the UI
-falls back to no Astrea use and keeps the SHARD workflow available.
+The Astrea endpoint defaults to
+`https://astrea.linkeddata.es/api/shacl/document`. Set
+`SHARD_ASTREA_API_URL` to use another deployment.
 
-The Astrea endpoint defaults to `https://astrea.linkeddata.es/api/shacl/document`.
-Self-hosted deployments can set `SHARD_ASTREA_API_URL`; the request timeout can
-be changed with `SHARD_ASTREA_TIMEOUT` (seconds).
+## Requirements
 
-## Run Locally
+- Python 3.10 or newer.
+- A remote inference endpoint, or enough local resources to run a compatible
+  Hugging Face model.
+- Node.js is not required at runtime; the frontend is served as static assets.
 
-Python 3.10 or newer is required.
+## Installation
+
+Clone the repository and install every production backend:
 
 ```bash
+git clone https://github.com/citiususc/shard.git
+cd shard
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+`requirements.txt` installs the project with its `local` extra. A remote-only
+installation can omit the large local-model dependencies:
+
+```bash
+python -m pip install .
+```
+
+## Running SHARD
+
+From a source checkout:
+
+```bash
 python run_demo.py
 ```
 
-Open <http://127.0.0.1:8768/>.
-
-The UI exposes neutral remote/local inference choices and model settings. A
-remote deployment reads its endpoint and credentials from
-`DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN`; these secrets are not displayed or
-stored in the browser. Programmatic API clients may still supply request-scoped
-credentials. On startup, SHARD loads the first `.env` file found in the current
-working directory or project root. Existing process variables take precedence,
-followed by `.env` values and then built-in defaults; explicit command-line
-arguments override the resulting deployment settings. Start from `.env.example`
-for a public deployment and never commit the resulting `.env` file.
-
-The package can also be installed in editable mode:
+The installed command is equivalent:
 
 ```bash
-python -m pip install -e .
 shard
 ```
 
+Open <http://127.0.0.1:8768/>. The default `unified` layout serves the UI, REST
+API and SSE endpoint from the same process. Loopback listeners on ports
+`9100`-`9104` preserve API v1 compatibility and are not intended to be exposed.
+
+SHARD loads the first `.env` found in the current directory or project root.
+Existing process variables take precedence. Copy `.env.example` when a local
+configuration file is useful, never commit `.env`, and never place provider
+credentials in frontend files.
+
+### Remote inference
+
+Configure the remote endpoint in the process environment or `.env`:
+
+```bash
+DATABRICKS_BASE_URL=https://workspace.example/ai-gateway/mlflow/v1
+DATABRICKS_TOKEN=replace-with-a-secret
+```
+
+The public deployment profile obtains these values from the server and never
+returns them to the browser. Local API clients may supply request-scoped
+provider credentials where the deployment permits it. Tokens are write-only,
+redacted from logs and excluded from sessions and provenance.
+
 ### Local inference
 
-Install the optional local dependencies:
+The local profile permits Hugging Face models running on the same machine:
 
 ```bash
-python -m pip install -r requirements-local.txt
-# equivalent after packaging:
-python -m pip install -e '.[local]'
+shard --deployment-profile local
 ```
 
-No model is selected or downloaded automatically. When a model is selected in
-the local UI, SHARD checks the local cache and asks for confirmation before an
-explicit download, whose progress is shown in the model panel. A small backend
-smoke test is available at:
+No model is selected or downloaded automatically. SHARD checks the local cache
+when the user chooses a model and asks for confirmation before downloading a
+missing snapshot.
+
+## Public Deployment
+
+Use the public profile to disable server-side local-model execution:
 
 ```bash
-python scripts/smoke_huggingface.py
+shard --deployment-profile public --host 127.0.0.1 --port 8000
 ```
 
-### Public deployment policy
+Place this listener behind HTTPS and a reverse proxy. Only the unified listener
+should be exposed. The frontend uses relative assets and the relative API base
+`api/v1/`, so a proxy can publish the application below `/shard/` while
+stripping that prefix before forwarding requests. See
+[Deployment Profiles](docs/deployment.md) for environment settings, proxy and
+SSE requirements.
 
-The public profile prevents server-side local-model execution while retaining
-remote inference:
+## Preloaded ePO Examples
 
-```bash
-python run_demo.py --deployment-profile public --host 0.0.0.0
-```
+The Import session menu exposes two complete examples based on the public
+eProcurement Ontology dataset:
 
-This is an application policy, not a complete production perimeter. Put public
-deployments behind HTTPS, explicit network policy and a reverse proxy. SHARD does
-not authenticate API clients; provider credentials are used only for inference.
-Expose the unified web port only.
+- One data constraint for Rule to Shape.
+- A batch of ten representative data constraints for Batch to Shapes.
 
-## Examples
-
-Two domains are included:
-
-- `examples/asset-maintenance/`: general non-ERA ontology, rules, context and a
-  sample validation profile.
-- `examples/era-rinf/`: compact ERA/RINF ontology and Data Constraints fixtures.
-
-The generic SHACL for SHACL profile is packaged at
-`src/shard/resources/validation/shacl-shacl.ttl`. The ERA-specific profile is
-kept separately at `profiles/era/era-shacl-shacl.ttl`.
+The sessions, extensible manifest and license attribution live in
+[`frontend/examples/`](frontend/examples/README.md). ePO is demonstration data;
+no ePO-specific behavior exists in the SHARD core.
 
 ## Architecture
 
-SHARD exposes one versioned application API and models five logical capability
-boundaries: ontology catalog and retrieval, data constraint grounding, shape
-generation, shape assurance and baseline integration, and authoring workflow
-orchestration. These are scientific and API responsibilities, not a requirement
-to deploy five operating-system services.
+SHARD exposes one versioned application API and five logical capability
+boundaries:
 
-The default runtime uses one process and one same-origin API. Loopback listeners
-on ports `9100` through `9104` preserve the former endpoint paths for local
-compatibility. The optional `split` layout runs those adapters as separate
-processes for comparative experiments; all routes still call the same
-application functions.
+1. Ontology Catalog and Retrieval Service.
+2. Data Constraint Grounding Service.
+3. Shape Generation Service.
+4. Shape Assurance and Baseline Integration Service.
+5. Authoring Workflow Service.
 
-See [architecture](docs/architecture.md), [HTTP API](docs/api.md), and
-[deployment](docs/deployment.md).
-
-## Repository Layout
+These are scientific and API responsibilities, not a requirement to deploy
+five operating-system services. See [Architecture](docs/architecture.md).
 
 ```text
 src/shard/
   domain/          data-constraint and ontology concepts
-  application/     resolution, generation, validation and orchestration
-  inference/       Databricks and local Hugging Face adapters
-  baselines/       Astrea parsing, evidence selection and merge strategies
-  api/             versioned contract and HTTP/SSE adapters
-  deployment/      hosted/local capability policy
-  observability/   request-scoped execution logging
+  application/     grounding, generation, validation and orchestration
+  inference/       remote and local inference adapters
+  baselines/       Astrea evidence and RDF-aware merge strategies
+  api/             OpenAPI, JSON, job and SSE transport adapters
+  deployment/      deployment policy and operational safeguards
+  observability/   request-scoped, secret-safe logging
   resources/       generic prompts and validation resources
-frontend/          static HTML, modular JavaScript and CSS
-profiles/          opt-in domain validation profiles
-examples/          runnable domain fixtures
-experiments/       reproducible research diagnostics
-scripts/           operational and smoke-test scripts
-tests/             unit and integration tests
+frontend/          static application and preloaded ePO sessions
 docs/              architecture, API and deployment documentation
 ```
 
-The Python package uses a `src/` layout so imports always resolve through the
-installed `shard` package instead of depending on the current directory.
+## REST API
 
-## API
-
-The canonical API is under `/api/v1`. Complete workflows for external clients
-are available as single JSON requests:
+The canonical API is available under `/api/v1`. Recommended complete workflows:
 
 - `POST /api/v1/workflows/rule-to-shape`
 - `POST /api/v1/workflows/batch-to-shapes`
-- `GET /api/v1/redoc` (ReDoc)
+- `POST /api/v1/batches/generate` for incremental SSE progress
 
-The batch resource implements the Guide-to-Shapes workflow described in the
-system architecture and paper.
+Composable operations cover ontology parsing and search, target resolution,
+shape generation, validation, lossless export, Astrea and merge. Discovery and
+documentation are available at:
 
-The existing SSE and fine-grained operations remain available:
-
-- `POST /api/v1/ontology/parse`
-- `POST /api/v1/ontology/search`
-- `POST /api/v1/rules/resolve-targets`
-- `POST /api/v1/shapes/build`
-- `POST /api/v1/shapes/validate`
-- `POST /api/v1/baselines/astrea`
-- `POST /api/v1/shapes/merge`
-- `POST /api/v1/models/local/status`
-- `POST /api/v1/models/local/downloads` (create a pollable job)
-- `POST /api/v1/batches/generate` (SSE)
 - `GET /api/v1`
-- `GET /api/v1/docs` (Swagger UI)
 - `GET /api/v1/openapi.json`
+- `GET /api/v1/docs` for Swagger UI
+- `GET /api/v1/redoc` for ReDoc
 - `GET /api/v1/capabilities`
 - `GET /api/v1/health`
 
-SHARD does not require a client token or API key. Ontology indexing and local
-model downloads use the canonical asynchronous job resources shown above in
-both unified and split service layouts.
+SHARD does not authenticate API clients itself. Provider credentials authorize
+inference providers, not the SHARD API. Deployments that require client access
+control must enforce it at the reverse proxy or platform boundary.
 
-Canonical responses expose typed operation metadata; authoring operations also
-expose secret-free authoring provenance. `X-SHARD-*` headers identify the API
-operation. Pre-rename `X-BR2SHACL-*` headers and environment aliases remain
-accepted during API v1 for compatibility.
+Canonical routes use typed snake_case payloads and secret-free provenance.
+Unversioned compatibility routes, the `BR2SHACL_*` environment aliases and
+`X-BR2SHACL-*` response headers remain available during API v1 for existing
+clients. New integrations should use `/api/v1`, `SHARD_*` and `X-SHARD-*`.
 
-See the [API documentation](docs/api.md), the live Swagger UI and OpenAPI 3.1
-document, and the standard-library clients in [`examples/api`](examples/api).
-
-## Target-Resolution Experiment
-
-The deterministic diagnostic requires no external credentials:
-
-```bash
-python experiments/target_resolution/evaluate.py --mode injected --case all
-```
-
-For real Databricks measurement, export explicit variables and select real
-mode. Canonical names are `SHARD_PROVIDER`, `SHARD_EMBEDDING_MODEL`, and
-`SHARD_LLM_MODEL`; the former `BR2SHACL_*` names remain aliases. Databricks
-credentials use `DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN`. Tokens are never
-printed by the diagnostic.
-
-## Tests
-
-```bash
-python -m unittest discover -s tests -p 'test_*.py' -v
-for file in frontend/js/*.js; do node --check "$file"; done
-git diff --check
-```
+See [REST API](docs/api.md) for endpoint selection, schemas, jobs, SSE, errors
+and executable `curl` examples.
 
 ## Citation and License
 
-Citation metadata is provided in [`CITATION.cff`](CITATION.cff). SHARD is
+The software citation is provided in [`CITATION.cff`](CITATION.cff). SHARD is
 released under the [MIT License](LICENSE).

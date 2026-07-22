@@ -30,7 +30,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("coverage-tag"),
     byId("remove-all-accepted-shapes"),
   );
-  wireExport("export-shapes", () => nodeShapes);
+  wireExport("export-shapes");
 
   byId("batch-file").addEventListener("change", onBatchSelected);
   byId("generate-batch").addEventListener("click", generateAll);
@@ -40,7 +40,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("validate-shape").addEventListener("click", checkShape);
   byId("accept-shape").addEventListener("click", acceptCurrent);
   byId("copy-shape").addEventListener("click", async () => {
+    const button = byId("copy-shape");
     const ok = await copyToClipboard(byId("shape-editor").value);
+    showCopyFeedback(button, ok);
     setStatus(ok ? "Copied" : "Copy failed");
   });
 });
@@ -83,23 +85,37 @@ function batchWorkspaceState() {
     domainContext: byId("domain-context").value,
     generationGuidance: byId("generation-guidance").value,
     batch: batchFile ? { ...batchFile } : null,
+    editableShape: byId("shape-editor").value,
+    queue,
+    activeIndex,
+    nodeShapes,
   };
 }
 
 function applyBatchWorkspaceState(workspace) {
   byId("domain-context").value = String(workspace.domainContext || "");
   byId("generation-guidance").value = String(workspace.generationGuidance || "");
-  if (!workspace.batch || !workspace.batch.content) return;
-  try {
-    loadBatchDocument(
-      workspace.batch.filename || "data_constraints.md",
-      String(workspace.batch.content),
-    );
-  } catch (error) {
-    batchFile = null;
-    byId("batch-summary").textContent = `Invalid imported batch: ${error.message}`;
-    byId("generate-batch").disabled = true;
+  if (workspace.batch && workspace.batch.content) {
+    try {
+      loadBatchDocument(
+        workspace.batch.filename || "data_constraints.md",
+        String(workspace.batch.content),
+      );
+    } catch (error) {
+      batchFile = null;
+      byId("batch-summary").textContent = `Invalid imported batch: ${error.message}`;
+      byId("generate-batch").disabled = true;
+    }
   }
+  queue = Array.isArray(workspace.queue) ? workspace.queue : [];
+  activeIndex = Number.isInteger(workspace.activeIndex)
+    && workspace.activeIndex >= 0 && workspace.activeIndex < queue.length
+    ? workspace.activeIndex : null;
+  nodeShapes = String(workspace.nodeShapes || "");
+  byId("shape-editor").value = String(workspace.editableShape || "");
+  renderQueue();
+  if (activeIndex !== null) selectQueueItem(activeIndex);
+  else refreshHighlight("shape-editor");
 }
 
 function validateBusinessRulesTemplate(filename, content) {
@@ -151,6 +167,15 @@ function validateBusinessRulesMarkdown(content) {
 }
 
 /* ---------- generate (streamed) ---------- */
+function showBatchPreparation(message, statusMessage = message, force = false) {
+  const panel = byId("validation-panel");
+  if (panel && (force || queue.length === 0)) {
+    panel.className = "validation-panel backend";
+    panel.textContent = message;
+  }
+  setStatus(statusMessage);
+}
+
 async function generateAll() {
   const o = getOntology();
   if (!o) { setStatus("Load an ontology first"); return; }
@@ -168,11 +193,11 @@ async function generateAll() {
     level: "info", stage: "configuration", message: "Batch generation requested",
   });
 
-  setStatus("Checking model configuration…");
-  if (panel) {
-    panel.className = "validation-panel backend";
-    panel.textContent = "Checking model configuration before batch generation…";
-  }
+  showBatchPreparation(
+    "Checking generation and embedding model configuration…",
+    "Checking model configuration…",
+    true,
+  );
   let modelCheck;
   try {
     modelCheck = await validateSelectedModels([
@@ -210,6 +235,11 @@ async function generateAll() {
 
   const requestedAstreaMode = getAstreaUseMode();
   if (requestedAstreaMode !== "none") {
+    showBatchPreparation(
+      "Preparing the ontology-derived Astrea baseline before batch generation…",
+      "Preparing Astrea baseline…",
+      true,
+    );
     appendExecutionEntry(batchGenerationLogId, {
       level: "info", stage: "astrea", message: `Preparing Astrea · ${requestedAstreaMode}`,
     });
@@ -229,7 +259,10 @@ async function generateAll() {
   refreshHighlight("shape-editor");
   byId("editor-title").textContent = "Editable shape";
   setProgress(0, 0, "Starting…");
-  setStatus("Preprocessing data constraints…");
+  showBatchPreparation(
+    "Preparing the data-constraint batch and checking the ontology embedding index…",
+    "Preparing batch generation…",
+  );
   generationController = new AbortController();
   setGenerationControls(true);
 
@@ -484,6 +517,16 @@ function logBatchEvent(ev) {
           details: semanticReviewDetails(ev),
         });
       }
+      if (ev.astrea_merge) {
+        const merge = ev.astrea_merge;
+        appendExecutionEntry(batchGenerationLogId, {
+          level: merge.applied ? "pass" : "warn", stage: "astrea", indent: 1,
+          message: merge.applied
+            ? `${target} · matching Astrea fragment merged before review · ${merge.strategy}`
+            : `${target} · Astrea merge not applied`,
+          details: (merge.warnings || []).join("\n"),
+        });
+      }
       appendExecutionEntry(batchGenerationLogId, {
         level: "pass", stage: "syntax", indent: 1, message: `${target} · Turtle syntax valid`,
       });
@@ -543,6 +586,21 @@ function logBatchEvent(ev) {
 
 function handleStatusEvent(ev) {
   const stage = ev.stage || "";
+  if (stage === "embeddings") {
+    const current = Number(ev.current || 0);
+    const total = Number(ev.total || 0);
+    const detail = ev.message || "Preparing ontology embeddings…";
+    const progress = total ? ` (${current} / ${total})` : "";
+    showBatchPreparation(`${detail}${progress}`, detail);
+    setProgress(null, null, `${detail}${progress}`);
+    return;
+  }
+  if (["parsing", "template", "preprocessing"].includes(stage)) {
+    const detail = ev.message || "Preparing batch generation…";
+    showBatchPreparation(detail, detail);
+    setProgress(null, null, detail);
+    return;
+  }
   if (stage === "rule") {
     const label = ruleLabel(ev);
     setProgress(ev.current, ev.total, `${label}: resolving ontology terms and roles…`, "data constraints processed");
@@ -661,6 +719,7 @@ function queueItemFromEvent(ev) {
     llmReviewApplied: Boolean(ev.llm_review_applied),
     reviewAttempts: ev.review_attempts || 0,
     semanticReview: ev.semantic_review || {},
+    astreaMerge: ev.astrea_merge || null,
     syntaxValid: ev.syntax_valid,
     profileValid: ev.profile_valid,
     profileCount: ev.profile_count,
@@ -737,27 +796,14 @@ function renderQueue() {
     card.className = `queue-card ${item.status}${activeIndex === i ? " active" : ""}${accepted}`;
     const badge = item.acceptedId ? "accepted" : item.status;
     const short = item.displayName || `${ruleLabel(item)} · ${targetLabel(item.property)}`;
-    const signal = item.unresolved
-      ? "unresolved"
-      : item.resolvedBy ? `via ${resolvedByText(item.resolvedBy)}` : "manual review";
-    const roleContext = formatRoleContext({
-      focus_nodes: item.focusNodes,
-      constraint_paths: item.constraintPaths,
-      related_terms: item.relatedTerms,
-    }, true);
-    const reason = item.status === "invalid"
-      ? errorTypeText(item.errorType)
-      : item.unresolved ? "unresolved" : signal;
-    const review = item.llmReviewApplied ? semanticReviewSummary(item) : "";
-    const meta = [roleContext, signal, review, validationShortLabel(item), reason !== signal ? reason : ""].filter(Boolean).join(" · ");
     card.innerHTML =
       `<strong>${esc(short)}</strong>` +
-      `<div class="qmeta"><span class="qbadge ${badge}">${badge}</span>` +
-      `<span>${esc(meta)} · ${item.attempts} attempt(s)</span></div>` +
+      `<span class="qbadge ${badge}">${esc(badge.toUpperCase())}</span>` +
       `<button class="secondary-button queue-edit" type="button">Edit</button>`;
     card.querySelector(".queue-edit").addEventListener("click", () => selectQueueItem(i));
     list.appendChild(card);
   });
+  scheduleWorkspacePersistence();
 }
 
 function reconcileQueueAcceptedState() {
@@ -807,6 +853,7 @@ function selectQueueItem(i) {
     panel.textContent = `No generated shape for ${item.displayName}.`;
   }
   renderQueue();
+  scheduleWorkspacePersistence();
 }
 
 function renderCurrentBusinessRule(item) {

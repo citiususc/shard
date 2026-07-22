@@ -56,8 +56,8 @@ const SERVICES = {
   resolveRule: apiUrl("rules/resolve-targets"),
   build: apiUrl("shapes/build"),
   validate: apiUrl("shapes/validate"),
+  exportShapes: apiUrl("shapes/export"),
   astrea: apiUrl("baselines/astrea"),
-  merge: apiUrl("shapes/merge"),
   validateModel: apiUrl("models/check"),
   localModelStatus: apiUrl("models/local/status"),
   downloadLocalModel: apiUrl("models/local/downloads"),
@@ -128,7 +128,7 @@ function apiValidationOptions() {
 }
 
 function apiAstreaOptions() {
-  const baseline = astreaEvidencePayload();
+  const baseline = getAstreaUseMode() === "none" ? null : astreaBaselinePayload();
   return {
     mode: getAstreaUseMode(),
     merge_strategy: getAstreaMergeTechnique(),
@@ -141,7 +141,7 @@ function apiAstreaOptions() {
 
 const DEFAULT_DEPLOYMENT_CAPABILITIES = {
   deployment_profile: "local",
-  repository_url: "https://github.com/citiususc/br2shacl-ui",
+  repository_url: "https://github.com/citiususc/shard",
   providers: {
     databricks: { enabled: true, execution: "remote" },
     huggingface: { enabled: true, execution: "local", message: "" },
@@ -194,10 +194,13 @@ const STORE = {
   accepted: "shard.accepted",   // [{id, property, shape}]
   shapeProfiles: "shard.shapeProfiles", // [{id, name, size, content}]
   astreaBaseline: "shard.astreaBaseline", // API-generated baseline for the active ontology
+  astreaBaselines: "shard.astreaBaselines", // ontologyHash -> reusable API baseline
   astreaUseMode: "shard.astreaUseMode", // none | evidence | merge | evidence-and-merge
   astreaMergeTechnique: "shard.astreaMergeTechnique", // generated-priority | restrictive
   astreaMergeMode: "shard.astreaMergeMode", // deprecated session migration key
   executionLogs: "shard.executionLogs", // structured history of generation/review runs
+  ruleWorkspace: "shard.workspace.rule", // current Rule-to-Shape authoring state
+  batchWorkspace: "shard.workspace.batch", // current Batch-to-Shapes authoring state
 };
 
 const LEGACY_STORE = Object.fromEntries(
@@ -340,6 +343,7 @@ function loadDeploymentCapabilities() {
         validate_model: "validateModel",
         local_model_status: "localModelStatus",
         download_local_model: "downloadLocalModel",
+        export_shapes: "exportShapes",
       };
       Object.keys(runtimeEndpoints).forEach((publicKey) => {
         const key = endpointKeys[publicKey] || publicKey;

@@ -1,82 +1,134 @@
 # Deployment Profiles
 
-The same codebase supports two explicit deployment policies. A profile controls
-which inference providers may execute. Remote credentials are deployment
-secrets, while model choices remain browser settings.
+SHARD uses one codebase with two inference policies. Deployment profiles decide
+which providers may execute; they do not authenticate API clients.
 
-| Profile | Intended use | Databricks | Hugging Face |
+| Profile | Intended use | Remote inference | Local Hugging Face |
 | --- | --- | --- | --- |
-| `local` | Development and self-hosted research | Remote | Local, enabled |
-| `public` | Publicly hosted demo | Remote | Local, disabled |
+| `local` | Development and self-hosting | Enabled | Enabled |
+| `public` | Hosted public demo | Enabled | Disabled |
 
-Run the local profile with:
+## Configuration
 
-```bash
-python3 run_demo.py --deployment-profile local
-```
-
-Run the hosted-demo policy with:
+SHARD reads process variables first and then loads missing values from the first
+`.env` found in the working directory or project root. Start with the bundled
+template:
 
 ```bash
-python3 run_demo.py --deployment-profile public --host 0.0.0.0
+cp .env.example .env
 ```
 
-In the public profile the frontend removes local-model configuration and links
-to the project repository. Every inference endpoint independently enforces the
-same policy, so a handcrafted request cannot cause the hosted server to load a
-local model. The browser presents the hosted backend simply as remote inference
-and never receives its base URL or token. It also hides custom-model controls;
-the deployment decides which remote model options are offered.
-
-No deployment profile selects a model automatically. In the local profile,
-selecting a model first performs an offline cache check. A missing model remains
-disabled until the user confirms an explicit download, whose progress is
-streamed to the model panel.
-
-For public deployments, configure the remote backend in the server process or
-its secret manager:
+For local development, the defaults are sufficient:
 
 ```bash
-export DATABRICKS_BASE_URL="https://workspace.example/ai-gateway/mlflow/v1"
-export DATABRICKS_TOKEN="..."
-python3 run_demo.py --deployment-profile public --host 0.0.0.0
+SHARD_DEPLOYMENT_PROFILE=local
+SHARD_SERVICE_LAYOUT=unified
+SHARD_HOST=127.0.0.1
+SHARD_PORT=8768
 ```
 
-Alternatively, copy `.env.example` to `.env` and replace its placeholder
-credentials. Both `python run_demo.py` and the installed `shard` command load
-`.env` automatically from the working directory or project root. Variables
-already supplied by the shell, systemd or another secret manager are never
-overwritten by the file. Only the loaded file path is reported at startup;
-secret values are not printed.
+For a public listener behind a reverse proxy:
 
-API clients may override these values with request-scoped credentials when the
-deployment policy permits it. Request values take precedence over server
-environment values.
+```bash
+SHARD_DEPLOYMENT_PROFILE=public
+SHARD_SERVICE_LAYOUT=unified
+SHARD_HOST=127.0.0.1
+SHARD_PORT=8000
+DATABRICKS_BASE_URL=https://workspace.example/ai-gateway/mlflow/v1
+DATABRICKS_TOKEN=replace-with-a-secret
+SHARD_CORS_ALLOWED_ORIGINS=https://apps.citius.gal
+SHARD_TRUSTED_PROXY_IPS=127.0.0.1
+```
 
-In the local profile, the browser exposes provider configuration so each user
-can supply their own remote URL and token. These write-only request values are
-not session-exported, logged or returned by the API.
+Run either the source launcher or installed command:
 
-The profile is an application capability policy, not a production network
-configuration. SHARD does not authenticate clients against its own API. A public
-deployment should place the application behind HTTPS, explicit network policy,
-the configured request-size/rate safeguards and a reverse proxy, and expose only
-the unified application endpoint. Compatibility ports are intended for loopback
-development and comparative experiments.
+```bash
+python run_demo.py
+# or
+shard
+```
 
-`GET /api/v1/capabilities` reports the active profile, provider execution modes,
-repository URL and API catalog. It contains no credentials or inference base
-URLs.
+Never commit `.env`. Provider tokens must remain in the process environment,
+secret manager or write-only API request fields. They are not returned by the
+API, included in provenance, exported in sessions or logged by SHARD.
 
-The canonical environment controls are `SHARD_DEPLOYMENT_PROFILE`,
-`SHARD_SERVICE_LAYOUT`, `SHARD_HOST`, and `SHARD_PORT`. The two former
-`BR2SHACL_*` aliases are accepted during the API v1 migration. Remote inference
-uses `DATABRICKS_BASE_URL` and `DATABRICKS_TOKEN` when a request does not supply
-an explicit override.
+## Inference Policy
 
-Operational limits are intentionally broad and configurable. See
-[`docs/api.md`](api.md#operational-safeguards) for rate, timeout, upload,
-concurrency, trusted-proxy and CORS variables. Set
-`SHARD_CORS_ALLOWED_ORIGINS` to the public frontend origin; do not rely on a
-wildcard. Provider tokens must remain in the server secret manager or in
-write-only request fields and must never be placed in reverse-proxy logs.
+The local profile exposes remote-provider configuration so each user can supply
+their own endpoint and token. It also permits local Hugging Face execution. No
+model is selected or downloaded automatically; downloading begins only after an
+explicit user confirmation.
+
+The public profile hides provider configuration and local-model controls. The
+server supplies remote credentials and independently rejects attempts to invoke
+local models, including handcrafted API requests.
+
+`GET /api/v1/capabilities` reports the active profile and non-secret provider
+capabilities. It never exposes provider URLs or credentials.
+
+## Unified and Split Layouts
+
+`unified` is the deployment layout. The main listener serves static frontend
+assets, JSON endpoints, jobs, Swagger, ReDoc and SSE under one origin.
+
+`split` exists for API v1 compatibility and comparative local operation. It
+starts internal adapters on ports `9100`-`9104`; the adapters call the same
+application functions as the unified API. Do not expose those ports publicly.
+The former `BR2SHACL_DEPLOYMENT_PROFILE` and `BR2SHACL_SERVICE_LAYOUT`
+environment names remain accepted only as compatibility aliases.
+
+## Reverse Proxy Under `/shard/`
+
+Frontend assets are relative and `frontend/js/core.js` defaults to the relative
+API base `api/v1/`. A page served as `https://apps.citius.gal/shard/rule.html`
+therefore calls `https://apps.citius.gal/shard/api/v1/...` automatically.
+`window.SHARD_API_BASE` can override this base before `core.js` loads, but a
+same-origin relative path is preferred.
+
+The reverse proxy must strip `/shard` before forwarding to SHARD. A representative
+nginx configuration is:
+
+```nginx
+location = /shard/api/v1/batches/generate {
+    proxy_pass http://127.0.0.1:8000/api/v1/batches/generate;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 7200s;
+    proxy_send_timeout 7200s;
+}
+
+location /shard/ {
+    proxy_pass http://127.0.0.1:8000/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 7200s;
+    proxy_send_timeout 7200s;
+}
+```
+
+The exact SSE location is placed first so nginx does not buffer generation
+events. The trailing slash in the general `proxy_pass` removes the public
+`/shard/` prefix.
+
+## Operational Safeguards
+
+SHARD applies configurable limits for request size, request rates, external
+timeouts, concurrent workflows, model downloads and queued jobs. Public reverse
+proxies must allow request bodies at least as large as the SHARD resources they
+are expected to accept. See [REST API](api.md#operational-safeguards) for every
+environment variable and default.
+
+`SHARD_TRUSTED_PROXY_IPS` controls whether `X-Forwarded-For` is trusted for rate
+limiting. Configure only the actual reverse-proxy addresses. Use an explicit
+`SHARD_CORS_ALLOWED_ORIGINS` allowlist whenever the API and UI are not strictly
+same-origin.
+
+The application policy is not a complete security perimeter. Public deployments
+still require HTTPS, network restrictions, process supervision and any desired
+client authentication at the reverse proxy or platform boundary.

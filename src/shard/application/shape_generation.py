@@ -397,9 +397,136 @@ def _public_semantic_review(status, critic_calls, correction_count, issues):
         "issues": issues,
     }
 
+
+def _astrea_merge_mode(payload):
+    mode = str(payload.get("astrea_use_mode") or "none").strip().lower()
+    return mode in {"merge", "both", "evidence-and-merge"}
+
+
+def _astrea_merge_strategy(payload):
+    strategy = str(
+        payload.get("astrea_merge_technique")
+        or payload.get("merge_strategy")
+        or "generated-priority"
+    ).strip().lower()
+    strategy = {
+        "priority-llm": "generated-priority",
+        "priority_llm": "generated-priority",
+    }.get(strategy, strategy)
+    if strategy not in {"generated-priority", "restrictive"}:
+        raise ValueError(
+            "Astrea merge strategy must be generated-priority or restrictive."
+        )
+    return strategy
+
+
+def _without_redundant_prefixes(document, prefixes):
+    """Keep only merged prefix declarations not already present in the editor."""
+    editor_bindings = set(_prefix_bindings(prefixes).items())
+    body_lines = []
+    for line in str(document or "").splitlines():
+        match = _PREFIX_DECLARATION_RE.fullmatch(line.strip())
+        if match and (match.group(1), match.group(2)) in editor_bindings:
+            continue
+        body_lines.append(line)
+    return "\n".join(body_lines).strip()
+
+
+def _merge_astrea_for_rule(
+    payload,
+    generated_shape,
+    prefixes,
+    target_roles,
+    ontology_content,
+    ontology_filename,
+    target,
+    grounding_catalog,
+):
+    """Merge only the Astrea fragment structurally matched to one rule."""
+    if not _astrea_merge_mode(payload):
+        return generated_shape, None, None
+
+    from shard.baselines import (
+        baseline_from_payload,
+        focused_baseline_for_roles,
+        merge_shape_documents,
+        parse_baseline_shapes,
+    )
+
+    strategy = _astrea_merge_strategy(payload)
+    metadata = {
+        "requested": True,
+        "applied": False,
+        "strategy": strategy,
+        "warnings": [],
+    }
+    content, filename = baseline_from_payload(payload)
+    metadata["baseline_name"] = filename
+    if not content.strip():
+        metadata["warnings"].append(
+            "Astrea merge was requested, but no baseline document was available."
+        )
+        return generated_shape, metadata, None
+
+    graph = payload.get("_astrea_graph")
+    if graph is None:
+        graph = parse_baseline_shapes(content, filename)
+        payload["_astrea_graph"] = graph
+    focused = focused_baseline_for_roles(graph, target_roles)
+    if not focused:
+        metadata["warnings"].append(
+            "No Astrea shape matched the resolved focus nodes and constraint paths."
+        )
+        return generated_shape, metadata, None
+
+    generated_document = f"{str(prefixes or '').strip()}\n\n{generated_shape}".strip()
+    merged = merge_shape_documents(
+        focused,
+        generated_document,
+        strategy,
+        astrea_filename=filename,
+        generated_filename="generated-rule.ttl",
+    )
+    merged_shape = _without_redundant_prefixes(
+        merged.get("shape_document", ""), prefixes
+    )
+    validation = validate_shape_content(
+        merged_shape,
+        prefixes,
+        validation_profiles_from_payload(payload),
+    )
+    if not validation.get("valid"):
+        raise ValueError(
+            validation.get("error")
+            or validation.get("report_text")
+            or "The focused Astrea merge failed SHACL validation."
+        )
+
+    grounding = validate_shape_grounding(
+        merged_shape,
+        prefixes,
+        ontology_content,
+        ontology_filename,
+        target,
+        grounding_catalog,
+        target_roles,
+    )
+    if not grounding.get("valid"):
+        raise ValueError(
+            grounding.get("error")
+            or "The focused Astrea merge failed ontology grounding."
+        )
+
+    metadata.update({
+        "applied": True,
+        "warnings": [str(item) for item in merged.get("warnings") or []],
+        "statistics": merged.get("stats") or {},
+    })
+    return merged_shape, metadata, validation
+
 def build_shape(payload):
     from shard.application.generation_support import clean_shacl_response
-    from shard.baselines import baseline_context_for_targets
+    from shard.baselines import baseline_context_for_roles
     from shard.inference import DEFAULT_GEN_MAX_NEW_TOKENS, get_chat_llm
     from shard.observability import logger
     from shard.prompting import load_prompt_from_json
@@ -421,7 +548,6 @@ def build_shape(payload):
         legacy_target,
     )
     target = _primary_target(target_roles, legacy_target)
-    all_targets = _target_terms(target_roles)
     temperature = float(payload.get("temperature", 0.5))
     model_id = payload.get("model") or "system.ai.gemma-3-12b"
 
@@ -463,7 +589,7 @@ def build_shape(payload):
         f"related={len(target_roles['related_terms'])} model={model_id}"
     )
     try:
-        astrea_shapes = baseline_context_for_targets(payload, all_targets or [target])
+        astrea_shapes = baseline_context_for_roles(payload, target_roles)
     except ValueError as exc:
         return {
             "shape": "", "valid": False, "error": str(exc), "attempts": 0,
@@ -885,25 +1011,103 @@ def build_shape(payload):
                     **validation,
                 }
 
+        astrea_merge = None
+        try:
+            merged_result, astrea_merge, merged_validation = _merge_astrea_for_rule(
+                payload,
+                last_result,
+                prefixes,
+                target_roles,
+                ontology_content,
+                ontology_filename,
+                target,
+                grounding_catalog,
+            )
+            if astrea_merge and astrea_merge.get("applied"):
+                last_result = merged_result
+                validation = merged_validation
+                logger.info(
+                    "[build] merged the role-focused Astrea fragment before review "
+                    f"using {astrea_merge['strategy']}."
+                )
+            elif astrea_merge:
+                logger.warn(
+                    "[build] Astrea merge was not applied: "
+                    + "; ".join(astrea_merge.get("warnings") or [])
+                )
+        except ValueError as exc:
+            failure_policy = str(
+                payload.get("astrea_failure_policy") or "continue"
+            ).strip().lower()
+            astrea_merge = {
+                "requested": True,
+                "applied": False,
+                "strategy": str(
+                    payload.get("astrea_merge_technique")
+                    or payload.get("merge_strategy")
+                    or "generated-priority"
+                ),
+                "warnings": [str(exc)],
+            }
+            if failure_policy == "fail":
+                logger.error(f"[build] focused Astrea merge failed: {exc}")
+                return {
+                    "shape": last_result,
+                    "valid": False,
+                    "error": str(exc),
+                    "attempts": attempt + 1,
+                    "review_attempts": review_attempts,
+                    "llm_review_applied": llm_review_applied,
+                    "semantic_review": semantic_review,
+                    "hints": _hints_from_shape(last_result, prefixes),
+                    "fallback": False,
+                    "error_type": "merge",
+                    "astrea_merge": astrea_merge,
+                    "message": "The focused Astrea merge failed before human review.",
+                }
+            logger.warn(
+                f"[build] focused Astrea merge failed; keeping generated shape: {exc}"
+            )
+
         logger.info(f"[build] valid SHACL on attempt {attempt + 1}")
         hints = _hints_from_shape(last_result, prefixes)
-        return {"shape": last_result, "valid": True, "error": None, "attempts": attempt + 1,
-                "review_attempts": review_attempts,
-                "llm_review_applied": llm_review_applied,
-                "semantic_review": semantic_review,
-                "hints": hints, "fallback": False, "error_type": "none",
-                "astrea_evidence_active": bool(astrea_shapes),
-                "target_roles": target_roles,
-                "syntax_valid": True,
-                "profile_valid": validation.get("profile_valid"),
-                "profile_count": validation.get("profile_count", 0),
-                "profile_names": validation.get("profile_names", []),
-                "generic_profile_active": validation.get("generic_profile_active", False),
-                "generic_profile_name": validation.get("generic_profile_name"),
-                "domain_profile_count": validation.get("domain_profile_count", 0),
-                "domain_profile_names": validation.get("domain_profile_names", []),
-                "validation_level": validation.get("validation_level"),
-                "message": validation.get("message") if validation.get("profile_count") else f"Valid SHACL generated by '{model_id}' (attempt {attempt + 1})."}
+        result_message = (
+            validation.get("message")
+            if validation.get("profile_count")
+            else f"Valid SHACL generated by '{model_id}' (attempt {attempt + 1})."
+        )
+        if astrea_merge and astrea_merge.get("applied"):
+            result_message += (
+                " The matching Astrea fragment was merged before human review "
+                f"using {astrea_merge['strategy']}."
+            )
+        elif astrea_merge and astrea_merge.get("warnings"):
+            result_message += " Astrea merge was not applied; see merge warnings."
+        return {
+            "shape": last_result,
+            "valid": True,
+            "error": None,
+            "attempts": attempt + 1,
+            "review_attempts": review_attempts,
+            "llm_review_applied": llm_review_applied,
+            "semantic_review": semantic_review,
+            "hints": hints,
+            "fallback": False,
+            "error_type": "none",
+            "astrea_evidence_active": bool(astrea_shapes),
+            "astrea_merge": astrea_merge,
+            "target_roles": target_roles,
+            "syntax_valid": True,
+            "profile_valid": validation.get("profile_valid"),
+            "profile_count": validation.get("profile_count", 0),
+            "profile_names": validation.get("profile_names", []),
+            "generic_profile_active": validation.get("generic_profile_active", False),
+            "generic_profile_name": validation.get("generic_profile_name"),
+            "domain_profile_count": validation.get("domain_profile_count", 0),
+            "domain_profile_names": validation.get("domain_profile_names", []),
+            "validation_level": validation.get("validation_level"),
+            "message": result_message,
+        }
 
     # Retries exhausted: return the invalid shape with the parse error.
     logger.error(f"[build] exhausted {MAX_RETRIES} attempts; last {error_type} error: {error_message}")

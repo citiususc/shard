@@ -77,6 +77,8 @@ def _merge_constraint_value(values, predicate, obj, logger):
     obj_key = _node_key(Graph(), obj)
     if obj_key in existing_keys:
         return values
+    if not values:
+        return [obj]
 
     if predicate in {SH.minCount, SH.minLength, SH.minInclusive, SH.minExclusive}:
         obj_number = _literal_number(obj)
@@ -130,14 +132,23 @@ def _add_node_constraints(
     source_node,
     logger,
 ):
-    constraints = grouped.setdefault(class_uri, {})
+    incoming = {}
     for predicate, obj in source_graph.predicate_objects(source_node):
         if predicate in {RDF.type, SH.targetClass, SH.property}:
             continue
         if isinstance(obj, BNode):
             _copy_bnode_closure(source_graph, bnode_graph, obj)
-        values = constraints.setdefault(predicate, [])
-        constraints[predicate] = _merge_constraint_value(values, predicate, obj, logger)
+        values = incoming.setdefault(predicate, [])
+        incoming[predicate] = _merge_constraint_value(values, predicate, obj, logger)
+    if not incoming:
+        return
+    constraints = grouped.setdefault(class_uri, {})
+    for predicate, values in incoming.items():
+        for obj in values:
+            existing = constraints.setdefault(predicate, [])
+            constraints[predicate] = _merge_constraint_value(
+                existing, predicate, obj, logger
+            )
 
 
 def _collect_consolidation_input(

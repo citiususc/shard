@@ -89,6 +89,7 @@ curl -X POST http://127.0.0.1:8768/api/v1/workflows/rule-to-shape \
 | Assign rule roles without generation | `POST /rules/resolve-targets` | Focus nodes, constraint paths and related terms. |
 | Generate from an already grounded rule | `POST /shapes/build` | Generated and validated SHACL document. |
 | Validate edited or external SHACL | `POST /shapes/validate` | Syntax and active SHACL for SHACL results; no generation. |
+| Export reviewed shapes | `POST /shapes/export` | One validated Turtle document with every distinct reviewed constraint preserved and exact redundancies removed. |
 | Obtain an ontology baseline from Astrea | `POST /baselines/astrea` | Validated Astrea document. |
 | Merge generated and baseline documents | `POST /shapes/merge` | Deterministic merged and validated document. |
 
@@ -99,6 +100,14 @@ rule and assigns ontology terms to stable roles. `/shapes/build` invokes the
 generation model and validates its result; `/shapes/validate` validates an
 existing document. `/workflows/batch-to-shapes` returns consolidated JSON,
 whereas `/batches/generate` streams intermediate events.
+
+`/shapes/export` accepts the reviewed fragments as separate RDF documents. It
+does not apply a merge strategy or choose between conflicting constraints. It
+preserves every distinct constraint, collapses only structurally identical
+anonymous property constraints, removes unreferenced target-only NodeShapes,
+serializes one prefix block and validates the final graph. The response includes
+an explicit `constraints_preserved` invariant and cleanup statistics; clients
+should not publish the result unless that invariant and `valid` are both true.
 
 ## Canonical request sections
 
@@ -302,8 +311,8 @@ Canonical Astrea modes are:
 | --- | --- |
 | `none` | Do not use Astrea. |
 | `evidence` | Use relevant Astrea shapes as generation evidence. |
-| `merge` | Merge Astrea output after SHARD generation. |
-| `evidence-and-merge` | Apply both behaviors. |
+| `merge` | Merge the structurally matching Astrea fragment into each generated rule shape before human review. |
+| `evidence-and-merge` | Use the matching fragment as evidence and merge it before review. |
 
 `baseline` and `both` are accepted deprecated input aliases. The canonical
 merge strategies are `generated-priority` and `restrictive`; `priority-llm` is
@@ -317,6 +326,13 @@ inconsistent intervals produce structured warnings. Generated messages and
 metadata remain authoritative where a deterministic combination would change
 their meaning. Namespace bindings from both RDF graphs are retained where they
 do not conflict.
+
+Workflow merges are scoped by exact resolved `focus_nodes` and
+`constraint_paths`; unrelated Astrea NodeShapes and sibling property paths are
+excluded. Each merged rule shape is validated before it is returned to the UI
+or consolidated into a batch. The standalone `/shapes/merge` operation remains
+available for clients that intentionally need to merge two complete SHACL
+documents.
 
 Call `/baselines/astrea` to invoke the external service. Supplying
 `astrea.baseline` in a workflow or `baseline` in `/shapes/merge` uses a
@@ -383,13 +399,18 @@ Deprecated input aliases are normalized but never emitted. Removing a
 deprecated alias or changing a canonical response incompatibly requires a new
 major API version. Additive optional fields may be introduced within v1.
 
-## Validation and regeneration
+## Contract inspection
 
 The OpenAPI document is generated dynamically; there is no checked-in generated
-JSON file. Restart SHARD after changing models, then refresh Swagger or ReDoc.
-For an offline artifact and contract validation:
+JSON file. Restart SHARD after changing public models, then refresh Swagger or
+ReDoc. To retain a formatted snapshot for client generation or external
+validation:
 
 ```bash
 curl http://127.0.0.1:8768/api/v1/openapi.json > /tmp/shard-openapi.json
-python -m unittest tests.unit.test_openapi_strict -v
+python -m json.tool /tmp/shard-openapi.json > /tmp/shard-openapi-formatted.json
 ```
+
+Swagger UI at `/api/v1/docs` is intended for interactive requests. ReDoc at
+`/api/v1/redoc` is the readable contract reference. The JSON document remains
+the authoritative OpenAPI 3.1 artifact.

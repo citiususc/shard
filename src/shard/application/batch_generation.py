@@ -52,9 +52,9 @@ def _llm_model_id(payload):
 
 
 def prepare_astrea_graph(payload):
-    """Parse active Astrea evidence once and cache the graph within the request."""
+    """Parse an active Astrea baseline once and cache it within the request."""
     use_mode = str(payload.get("astrea_use_mode") or "").strip().lower()
-    if use_mode and use_mode not in {"baseline", "both"}:
+    if use_mode and use_mode not in {"baseline", "merge", "both"}:
         return None
     graph = payload.get("_astrea_graph")
     if graph is not None:
@@ -209,7 +209,7 @@ def _semantic_payload(payload, ontology_content, ontology_terms):
     }
 
 
-def _prepare_rule_resolver_embeddings(payload, semantic_payload):
+def _prepare_rule_resolver_embeddings(payload, semantic_payload, event_callback=None):
     """Prepare ontology embeddings for rule-context resolution when configured."""
     if not _truthy(payload.get("wait_embeddings"), default=True):
         return None
@@ -222,8 +222,25 @@ def _prepare_rule_resolver_embeddings(payload, semantic_payload):
     )
     poll_seconds = float(payload.get("embedding_poll_seconds", 2.0))
     started = time.monotonic()
+    _emit(event_callback, {
+        "type": "status",
+        "stage": "embeddings",
+        "current": 0,
+        "total": len(semantic_payload.get("ontology_terms") or []),
+        "message": "Checking the ontology embedding index…",
+    })
     result = prepare_embeddings(semantic_payload)
     status = result.get("status", "unknown")
+    _emit(event_callback, {
+        "type": "status",
+        "stage": "embeddings",
+        "current": result.get("completed", 0),
+        "total": result.get("total", 0),
+        "embedding_status": status,
+        "message": result.get("message") or "Preparing ontology embeddings…",
+    })
+    if status == "ready":
+        return result
     if status in {"disabled", "error", "cancelled"}:
         message = result.get("message") or f"Embedding preparation failed: {result}"
         if semantic_payload.get("strict_semantic"):
@@ -238,6 +255,14 @@ def _prepare_rule_resolver_embeddings(payload, semantic_payload):
         line = f"{status}:{current.get('completed', 0)}/{current.get('total', 0)}"
         if line != last_line:
             logger.info(f"[batch-rule] resolver embeddings {line}")
+            _emit(event_callback, {
+                "type": "status",
+                "stage": "embeddings",
+                "current": current.get("completed", 0),
+                "total": current.get("total", 0),
+                "embedding_status": status,
+                "message": current.get("message") or "Preparing ontology embeddings…",
+            })
             last_line = line
         if status == "ready":
             return current
@@ -320,7 +345,7 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
     })
 
     semantic_payload = _semantic_payload(payload, ontology_content, ontology_terms)
-    _prepare_rule_resolver_embeddings(payload, semantic_payload)
+    _prepare_rule_resolver_embeddings(payload, semantic_payload, event_callback)
     ensure_workflow_deadline()
     llm = resolver_llm if resolver_llm is not None else resolver_llm_from_payload(payload)
 
@@ -536,6 +561,7 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
             "domain_profile_count": result.get("domain_profile_count", 0),
             "domain_profile_names": result.get("domain_profile_names", []),
             "validation_level": result.get("validation_level"),
+            "astrea_merge": result.get("astrea_merge"),
             "business_rule": rule.text,
         })
 
@@ -549,8 +575,7 @@ def _generate_rule_first(payload, *, semantic_ranker=None, resolver_llm=None, sh
         shape_prefix=shape_prefix,
     )
     shape_parts = [part for part in [consolidated["node_shapes"], consolidated["property_shapes"]] if part]
-    shape_body = "\n\n".join(shape_parts).strip()
-    shape_document = f"{prefixes.strip()}\n\n{shape_body}".strip() if shape_body else prefixes.strip()
+    shape_document = "\n\n".join(shape_parts).strip() or prefixes.strip()
     valid_count = sum(1 for item in generated_shapes if item.get("valid"))
     invalid_count = len(generated_shapes) - valid_count
     resolved_term_count = sum(

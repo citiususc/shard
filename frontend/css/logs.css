@@ -29,8 +29,7 @@
 .logs-button.active .logs-count { background: #ff7b72; color: #0d1117; }
 
 .topnav > .navlink,
-.topnav > .logs-button,
-.topnav > .status-pill {
+.topnav > .logs-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -43,12 +42,6 @@
 .topnav > .navlink[href="rule.html"] { width: 120px; }
 .topnav > .navlink[href="batch.html"] { width: 132px; }
 .topnav > .logs-button { width: 84px; font-size: 0.82rem; }
-.topnav > .status-pill {
-  width: 116px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .logs-drawer {
   position: fixed;
   left: 0; right: 0; bottom: 0;

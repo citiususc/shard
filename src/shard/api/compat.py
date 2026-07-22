@@ -43,6 +43,7 @@ COMPATIBILITY_SERVICES = {
             "baselines.astrea.generate",
             "shapes.build",
             "shapes.validate",
+            "shapes.prepare-export",
             "shapes.merge",
             "models.check",
             "models.local.status",

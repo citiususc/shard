@@ -29,7 +29,6 @@
         <button class="logs-button" id="logs-toggle" type="button">
           <span>Logs</span><span class="logs-count" id="logs-count" hidden>0</span>
         </button>
-        <span class="status-pill" id="status-pill">Ready</span>
       </nav>
     </header>
 
@@ -115,7 +114,7 @@
               </div>
               <div class="provider-unavailable-notice" data-hf-public-notice hidden>
                 <p data-provider-disabled-message>Local inference is not available in this hosted version.</p>
-                <a href="https://github.com/citiususc/br2shacl-ui" target="_blank" rel="noopener noreferrer">citiususc/br2shacl-ui</a>
+                <a href="https://github.com/citiususc/shard" target="_blank" rel="noopener noreferrer">citiususc/shard</a>
               </div>
             </div>
           </div>
@@ -183,7 +182,7 @@
                     <select id="astrea-use-mode" class="input astrea-select" title="Non-No modes send the loaded ontology to the external Astrea service">
                       <option value="none">No</option>
                       <option value="evidence">Evidence only</option>
-                      <option value="merge">Final merge only</option>
+                      <option value="merge">Merge before review</option>
                       <option value="evidence-and-merge">Evidence and merge</option>
                     </select>
                   </div>

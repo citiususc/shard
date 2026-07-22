@@ -1,14 +1,15 @@
 cff-version: 1.2.0
 message: "If you use SHARD in your research, please cite this software and its associated paper."
-title: "SHARD: An Interactive Ontology-Grounded SHACL Authoring from Business Rules"
+title: "SHARD: Interactive Ontology-Grounded SHACL Authoring from Natural-Language Data Constraints"
 type: software
 version: 0.1.0
 date-released: 2026-07-20
 license: MIT
 authors:
   - name: "CiTIUS, Universidade de Santiago de Compostela"
-repository-code: "https://github.com/citiususc/br2shacl-ui"
-url: "https://github.com/citiususc/br2shacl-ui"
+repository-code: "https://github.com/citiususc/shard"
+url: "https://github.com/citiususc/shard"
 abstract: >-
   SHARD is an interactive application for generating, grounding, validating,
-  reviewing and exporting SHACL shapes from ontologies and business rules.
+  reviewing and exporting SHACL shapes from ontologies and natural-language
+  data constraints.

@@ -3,7 +3,44 @@
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-from rdflib import Graph
+from rdflib import Graph, Literal
+from rdflib.namespace import SH, XSD
+
+
+_CARDINALITY_PREDICATES = (
+    SH.minCount,
+    SH.maxCount,
+    SH.qualifiedMinCount,
+    SH.qualifiedMaxCount,
+)
+
+
+def normalize_shacl_cardinalities(graph: Graph) -> Graph:
+    """Canonicalize SHACL cardinality literals for meta-SHACL validation.
+
+    Astrea may serialize non-negative counts with ``xsd:nonNegativeInteger``.
+    SHACL permits the value, but the generic SHACL-for-SHACL profile in this
+    project requires the canonical ``xsd:integer`` datatype.
+    """
+    replacements = []
+    for predicate in _CARDINALITY_PREDICATES:
+        for subject, value in graph.subject_objects(predicate):
+            if not isinstance(value, Literal):
+                continue
+            try:
+                count = int(str(value))
+            except (TypeError, ValueError):
+                continue
+            if count < 0 or value.datatype == XSD.integer:
+                continue
+            replacements.append(
+                (subject, predicate, value, Literal(count, datatype=XSD.integer))
+            )
+
+    for subject, predicate, old_value, new_value in replacements:
+        graph.remove((subject, predicate, old_value))
+        graph.add((subject, predicate, new_value))
+    return graph
 
 def _guess_format(filename: str) -> str:
     return {
@@ -24,13 +61,13 @@ def parse_baseline_shapes(content: str, filename: str = "astrea.ttl") -> Graph:
     graph = Graph(bind_namespaces="none")
     try:
         graph.parse(data=content, format=fmt)
-        return graph
+        return normalize_shacl_cardinalities(graph)
     except Exception as first_exc:
         fallback = "xml" if fmt != "xml" else "turtle"
         try:
             graph = Graph(bind_namespaces="none")
             graph.parse(data=content, format=fallback)
-            return graph
+            return normalize_shacl_cardinalities(graph)
         except Exception as second_exc:
             raise ValueError(
                 f"Could not parse SHACL shapes as {fmt} or {fallback}: {second_exc}"
@@ -47,4 +84,3 @@ def baseline_from_payload(payload: Dict[str, Any]) -> Tuple[str, str]:
     return str(payload.get("astrea_shapes") or baseline or ""), str(
         payload.get("astrea_filename") or "astrea.ttl"
     )
-

@@ -228,7 +228,11 @@ class AstreaOptions(ApiModel):
         "none", "evidence", "merge", "evidence-and-merge", "baseline", "both"
     ] = Field(
         default="none",
-        description="Astrea usage. baseline and both are deprecated input aliases.",
+        description=(
+            "Astrea usage. Merge modes combine only the fragment matching each "
+            "rule's resolved focus nodes and constraint paths before human review. "
+            "baseline and both are deprecated input aliases."
+        ),
     )
     merge_strategy: Literal[
         "generated-priority", "restrictive", "priority-llm"
@@ -436,6 +440,12 @@ class ShapeValidationRequest(ApiModel):
     validation: ValidationOptions = Field(default_factory=ValidationOptions)
 
 
+class ShapeExportRequest(ApiModel):
+    documents: List[BaselineInput] = Field(min_length=1)
+    prefixes: str = ""
+    validation: ValidationOptions = Field(default_factory=ValidationOptions)
+
+
 class AstreaBaselineRequest(ApiModel):
     ontology: OntologyInput
 
@@ -635,10 +645,28 @@ class ShapeBuildResponse(AuthoringResponse):
     semantic_review: SemanticReviewResult = Field(
         default_factory=SemanticReviewResult
     )
+    astrea_merge: Optional["RuleAstreaMergeResult"] = None
 
 
 class ShapeValidationResponse(AuthoringResponse, ValidationResult):
     pass
+
+
+class ShapeExportStatistics(ApiModel):
+    source_documents: int = Field(ge=1)
+    input_triples: int = Field(ge=0)
+    output_triples: int = Field(ge=0)
+    input_node_shapes: int = Field(ge=0)
+    output_node_shapes: int = Field(ge=0)
+    distinct_constraints: int = Field(ge=0)
+    duplicate_constraints_removed: int = Field(ge=0)
+    empty_node_shapes_removed: int = Field(ge=0)
+    constraints_preserved: bool
+
+
+class ShapeExportResponse(AuthoringResponse, ValidationResult):
+    shape_document: str
+    statistics: ShapeExportStatistics
 
 
 class AstreaBaselineResponse(AuthoringResponse):
@@ -670,6 +698,15 @@ class MergeStatistics(ApiModel):
     astrea_fallback_target_classes: int = 0
     merged_paths: int = 0
     merged_target_classes: int = 0
+
+
+class RuleAstreaMergeResult(ApiModel):
+    requested: bool = True
+    applied: bool
+    strategy: Literal["generated-priority", "restrictive"]
+    baseline_name: Optional[str] = None
+    warnings: List[str] = Field(default_factory=list)
+    statistics: MergeStatistics = Field(default_factory=MergeStatistics)
 
 
 class ShapeMergeResponse(AuthoringResponse, ValidationResult):
@@ -717,6 +754,7 @@ class GeneratedShapeOutcome(ApiModel):
     semantic_review: SemanticReviewResult = Field(
         default_factory=SemanticReviewResult
     )
+    astrea_merge: Optional[RuleAstreaMergeResult] = None
 
 
 class UnresolvedRuleOutcome(ApiModel):
@@ -841,6 +879,7 @@ class RuntimeEndpointMap(ApiModel):
     resolve_rule: str
     build: str
     validate_endpoint: str = Field(alias="validate", serialization_alias="validate")
+    export_shapes: str
     astrea: str
     merge: str
     validate_model: str
@@ -1011,6 +1050,7 @@ REQUEST_MODELS = {
     "rules.resolve-targets": TargetResolutionRequest,
     "shapes.build": ShapeBuildRequest,
     "shapes.validate": ShapeValidationRequest,
+    "shapes.prepare-export": ShapeExportRequest,
     "baselines.astrea.generate": AstreaBaselineRequest,
     "shapes.merge": ShapeMergeRequest,
     "batches.generate": BatchStreamRequest,
@@ -1030,6 +1070,7 @@ RESPONSE_MODELS = {
     "rules.resolve-targets": TargetResolutionResponse,
     "shapes.build": ShapeBuildResponse,
     "shapes.validate": ShapeValidationResponse,
+    "shapes.prepare-export": ShapeExportResponse,
     "baselines.astrea.generate": AstreaBaselineResponse,
     "shapes.merge": ShapeMergeResponse,
     "workflows.rule.generate": RuleWorkflowResponse,
@@ -1073,6 +1114,7 @@ PUBLIC_MODELS = tuple(dict.fromkeys([
     OntologyIndexCreateRequest,
     ShapeBuildRequest,
     ShapeValidationRequest,
+    ShapeExportRequest,
     AstreaBaselineRequest,
     ShapeMergeRequest,
     BatchStreamRequest,
@@ -1085,6 +1127,8 @@ PUBLIC_MODELS = tuple(dict.fromkeys([
     TargetResolutionResponse,
     ShapeBuildResponse,
     ShapeValidationResponse,
+    ShapeExportStatistics,
+    ShapeExportResponse,
     AstreaBaselineResponse,
     ShapeMergeResponse,
     RuleWorkflowResponse,
@@ -1225,6 +1269,11 @@ def to_application_payload(operation: str, payload: Mapping[str, Any]) -> Dict[s
     if operation == "shapes.validate":
         flat.update(
             shape=request.get("shape_document", ""),
+            prefixes=request.get("prefixes", ""),
+        )
+    if operation == "shapes.prepare-export":
+        flat.update(
+            shape_documents=request.get("documents") or [],
             prefixes=request.get("prefixes", ""),
         )
     if operation == "baselines.astrea.generate":
@@ -1399,6 +1448,26 @@ def _canonical_astrea_status(value: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _canonical_rule_astrea_merge(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return None
+    strategy = str(value.get("strategy") or "generated-priority")
+    if strategy == "priority-llm":
+        strategy = "generated-priority"
+    return {
+        "requested": bool(value.get("requested", True)),
+        "applied": bool(value.get("applied")),
+        "strategy": strategy,
+        "baseline_name": value.get("baseline_name"),
+        "warnings": [str(item) for item in value.get("warnings") or []],
+        "statistics": {
+            str(key): int(item)
+            for key, item in (value.get("statistics") or {}).items()
+            if key in MergeStatistics.model_fields
+        },
+    }
+
+
 def _canonical_resolution_outcome(row: Mapping[str, Any]) -> Dict[str, Any]:
     resolution = row.get("resolution") or {}
     roles = {
@@ -1442,6 +1511,7 @@ def _canonical_shape_outcome(row: Mapping[str, Any]) -> Dict[str, Any]:
         "llm_review_applied": bool(row.get("llm_review_applied")),
         "review_attempts": int(row.get("review_attempts") or 0),
         "semantic_review": row.get("semantic_review") or {},
+        "astrea_merge": _canonical_rule_astrea_merge(row.get("astrea_merge")),
     }
 
 
@@ -1554,9 +1624,16 @@ def canonicalize_success(operation: str, payload: Mapping[str, Any]) -> Dict[str
             "llm_review_applied": bool(result.get("llm_review_applied")),
             "review_attempts": int(result.get("review_attempts") or 0),
             "semantic_review": result.get("semantic_review") or {},
+            "astrea_merge": _canonical_rule_astrea_merge(result.get("astrea_merge")),
         }
     elif operation == "shapes.validate":
         result = _canonical_validation(result)
+    elif operation == "shapes.prepare-export":
+        result = {
+            **_canonical_validation(result),
+            "shape_document": str(result.get("shape_document") or ""),
+            "statistics": result.get("statistics") or {},
+        }
     elif operation == "baselines.astrea.generate":
         result = {
             "available": bool(result.get("available")),
@@ -1707,6 +1784,21 @@ def enrich_provenance(
                 validations.append(dict(shape["validation"]))
         record["selected_targets"] = selected
         record["validation_results"] = validations
+        rule_merges = [
+            shape.get("astrea_merge")
+            for shape in result.get("shapes") or []
+            if isinstance(shape.get("astrea_merge"), Mapping)
+        ]
+        applied_merges = [item for item in rule_merges if item.get("applied")]
+        if applied_merges:
+            record["merge_strategy"] = applied_merges[0].get("strategy")
+        merge_warnings = [
+            str(warning)
+            for item in rule_merges
+            for warning in item.get("warnings") or []
+        ]
+        if merge_warnings:
+            record["warnings"] = list(record.get("warnings") or []) + merge_warnings
     validation = None
     if operation == "shapes.validate":
         validation = result
@@ -1724,4 +1816,14 @@ def enrich_provenance(
     if operation == "shapes.merge" and isinstance(result.get("merge"), Mapping):
         record["merge_strategy"] = result["merge"].get("merge_strategy")
         record["warnings"] = list(result["merge"].get("warnings") or [])
+    rule_merge = result.get("astrea_merge")
+    if not isinstance(rule_merge, Mapping) and isinstance(result.get("shape"), Mapping):
+        rule_merge = result["shape"].get("astrea_merge")
+    if isinstance(rule_merge, Mapping):
+        if rule_merge.get("applied"):
+            record["merge_strategy"] = rule_merge.get("strategy")
+        if rule_merge.get("warnings"):
+            record["warnings"] = list(record.get("warnings") or []) + list(
+                rule_merge["warnings"]
+            )
     return {key: value for key, value in record.items() if value is not None}

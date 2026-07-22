@@ -99,6 +99,7 @@ AUTHORING_OPERATIONS = {
     "rules.resolve-targets",
     "shapes.build",
     "shapes.validate",
+    "shapes.prepare-export",
     "baselines.astrea.generate",
     "shapes.merge",
     "workflows.rule.generate",

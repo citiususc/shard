@@ -99,6 +99,10 @@ select.input { padding: 0 8px; }
   line-height: 1;
   text-transform: uppercase;
 }
+.namespace-input-row label:last-child > span {
+  text-align: right;
+  transform: translateY(1px);
+}
 .namespace-input-row .input {
   width: 100%;
   min-width: 0;
@@ -544,6 +548,18 @@ body.app-page .rail .model-panel [data-inference-setting][hidden] { display: non
   width: 58px;
   min-width: 58px;
 }
+.shape-editor-actions #copy-shape {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+.shape-editor-actions #copy-shape.copy-feedback-active {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
 .resolved-role-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -791,7 +807,7 @@ dd { margin: 4px 0 0; overflow-wrap: anywhere; font-weight: 700; font-size: 0.88
 .qbadge.accepted { background: var(--ink); color: var(--surface); }
 
 body.batch-page .generated-shapes-block {
-  --queue-card-height: 36px;
+  --queue-card-height: 30px;
   --generated-queue-gap: 4px;
   --generated-queue-height: calc((var(--queue-card-height) * 3) + (var(--generated-queue-gap) * 2));
 }
@@ -803,6 +819,7 @@ body.batch-page .generated-shapes-block .batch-progress-heading {
   flex: 1 1 auto;
 }
 body.batch-page .generated-shapes-block .queue-list {
+  --queue-card-height: 30px;
   flex: 0 0 var(--generated-queue-height);
   height: var(--generated-queue-height);
   min-height: var(--generated-queue-height);
@@ -813,28 +830,26 @@ body.batch-page .generated-shapes-block .queue-list {
   scroll-padding-bottom: 0;
 }
 body.batch-page .generated-shapes-block .queue-card {
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0 8px;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: 6px;
 }
 body.batch-page .generated-shapes-block .queue-card strong {
   font-size: 0.78rem;
   line-height: 1.05;
 }
-body.batch-page .generated-shapes-block .queue-card .qmeta {
-  gap: 5px;
-  font-size: 0.58rem;
-  line-height: 1;
-}
 body.batch-page .generated-shapes-block .qbadge {
   padding: 1px 6px;
   font-size: 0.56rem;
 }
 body.batch-page .generated-shapes-block .queue-edit {
-  height: 26px;
-  min-height: 26px;
-  padding: 0 9px;
-  font-size: 0.7rem;
+  grid-row: auto;
+  grid-column: auto;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 0.66rem;
 }
 .section-actions {
   display: flex;

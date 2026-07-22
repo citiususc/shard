@@ -186,6 +186,10 @@ def request_example(operation: str) -> Optional[Dict[str, Any]]:
             "inference": common["inference"],
         },
         "shapes.validate": {"shape_document": BOOK_SHAPE},
+        "shapes.prepare-export": {
+            "documents": [{"name": "BR-BOOK-001.ttl", "content": BOOK_SHAPE}],
+            "prefixes": "@prefix ex: <http://example.org/books#> .",
+        },
         "baselines.astrea.generate": {"ontology": common["ontology"]},
         "shapes.merge": {
             "generated": {"name": "generated.ttl", "content": BOOK_SHAPE},
@@ -376,6 +380,22 @@ def _response_example(operation: str, status: int) -> Optional[Dict[str, Any]]:
             "validation": valid_result, "logs": "", "inference_provider": "databricks",
             "generation_model": "configured-chat-model",
         },
+        "shapes.prepare-export": {
+            **envelope,
+            **valid_result,
+            "shape_document": BOOK_SHAPE,
+            "statistics": {
+                "source_documents": 1,
+                "input_triples": 8,
+                "output_triples": 8,
+                "input_node_shapes": 1,
+                "output_node_shapes": 1,
+                "distinct_constraints": 1,
+                "duplicate_constraints_removed": 0,
+                "empty_node_shapes_removed": 0,
+                "constraints_preserved": True,
+            },
+        },
         "baselines.astrea.generate": {
             **envelope,
             "available": True, "source": "astrea-api", "name": "books_astrea.ttl",
@@ -514,7 +534,7 @@ def _authoring_provenance_example(operation: str) -> Dict[str, Any]:
         "errors": [],
         "created_at": "2026-01-01T00:00:00Z",
     }
-    if operation == "shapes.validate":
+    if operation in {"shapes.validate", "shapes.prepare-export"}:
         return base
     if operation == "baselines.astrea.generate":
         return {
@@ -622,7 +642,7 @@ def _error_example(operation: str, status: int) -> Dict[str, Any]:
     if status == 413:
         if operation in {"ontology.parse", "ontology.search", "ontology.index.create", "rules.resolve-targets", "baselines.astrea.generate", "workflows.rule.generate", "workflows.batch.generate", "batches.generate"}:
             limit_mb, resource = 200, "ontology upload"
-        elif operation in {"shapes.validate", "shapes.merge"}:
+        elif operation in {"shapes.validate", "shapes.prepare-export", "shapes.merge"}:
             limit_mb, resource = 50, "SHACL document"
         else:
             limit_mb, resource = 256, "request body"
@@ -742,6 +762,7 @@ OPERATION_ERRORS = {
     "rules.resolve-targets": (400, 403, 422, 500),
     "shapes.build": (400, 403, 422, 500, 503, 504),
     "shapes.validate": (400, 422, 500),
+    "shapes.prepare-export": (400, 422, 500),
     "baselines.astrea.generate": (400, 422, 429, 500, 502, 503, 504),
     "shapes.merge": (400, 422, 500),
     "batches.generate": (400, 403, 422, 500, 503, 504),

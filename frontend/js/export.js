@@ -1,14 +1,34 @@
 /* SHARD export helpers. */
 
 /* ---------- export ---------- */
-function buildTurtleDocument(extraNodeShapes) {
+async function buildTurtleDocument() {
   const o = getOntology();
   const prefixes = (o && o.prefixes) || "";
-  const bodies = getAccepted().map((s) => s.shape.trim()).filter(Boolean);
-  let doc = prefixes.trim() + "\n\n";
-  if (extraNodeShapes && extraNodeShapes.trim()) doc += extraNodeShapes.trim() + "\n\n";
-  doc += bodies.join("\n\n") + "\n";
-  return doc;
+  const documents = getAccepted()
+    .map((item, index) => ({
+      name: `${item.property || `accepted-shape-${index + 1}`}.ttl`,
+      content: String(item.shape || "").trim(),
+    }))
+    .filter((item) => item.content);
+  if (!documents.length) throw new Error("No accepted shapes to export.");
+  const result = await fetchJSON(SERVICES.exportShapes, {
+    method: "POST",
+    body: JSON.stringify({
+      documents,
+      prefixes,
+      validation: apiValidationOptions(),
+    }),
+  }, { label: "Prepare accepted shape export", timeoutMs: 120000 });
+  if (!result.valid) {
+    throw new Error(
+      result.report_text || result.error || result.message
+      || "The consolidated SHACL export did not pass validation."
+    );
+  }
+  if (!result.statistics || result.statistics.constraints_preserved !== true) {
+    throw new Error("The backend could not prove that all reviewed constraints were preserved.");
+  }
+  return result;
 }
 
 function downloadText(filename, text, type = "text/plain") {
@@ -45,57 +65,28 @@ async function saveTextAsFile(defaultName, text, type = "text/plain", descriptio
   return { saved: true, picked: false, name };
 }
 
-function wireExport(buttonId, getNodeShapes) {
+function wireExport(buttonId) {
   const btn = byId(buttonId);
   if (!btn) return;
   btn.addEventListener("click", async () => {
     if (getAccepted().length === 0) { setStatus("No accepted shapes to export"); return; }
-    const node = getNodeShapes ? getNodeShapes() : "";
-    const generatedDocument = buildTurtleDocument(node);
-    const useMode = getAstreaUseMode();
     btn.disabled = true;
     try {
-      if (!astreaUsesMerge(useMode)) {
-        downloadText("shard_shapes.ttl", generatedDocument, "text/turtle");
-        setStatus("Exported shard_shapes.ttl · no Astrea merge");
-        return;
-      }
-      let baseline = astreaBaselinePayload();
-      if (!baseline) {
-        await ensureAstreaBaseline();
-        baseline = astreaBaselinePayload();
-      }
-      if (!baseline) {
-        downloadText("shard_shapes.ttl", generatedDocument, "text/turtle");
-        setStatus("Exported without Astrea because its baseline was unavailable");
-        return;
-      }
-      const technique = getAstreaMergeTechnique();
-      setStatus(`Merging final shapes · ${technique}`);
-      const result = await fetchJSON(SERVICES.merge, {
-        method: "POST",
-        body: JSON.stringify({
-          generated: { name: "shard_shapes.ttl", content: generatedDocument },
-          baseline: { name: baseline.name || "astrea.ttl", content: baseline.content },
-          merge_strategy: technique,
-          validation: apiValidationOptions(),
-        }),
-      }, { label: "Merge Astrea baseline", timeoutMs: 30000 });
-      if (!result.valid) {
-        throw new Error(result.report_text || result.error || "Merged shapes failed validation.");
-      }
-      const filename = `shard_shapes_${technique}.ttl`;
-      downloadText(filename, result.shape_document, "text/turtle");
-      const warnings = result.merge && Array.isArray(result.merge.warnings)
-        ? result.merge.warnings.length : 0;
-      setStatus(`Exported ${filename}${warnings ? ` · ${warnings} merge warning(s)` : ""}`);
+      const result = await buildTurtleDocument();
+      downloadText("shard_shapes.ttl", result.shape_document, "text/turtle");
+      const stats = result.statistics;
+      const cleaned = stats.duplicate_constraints_removed + stats.empty_node_shapes_removed;
+      setStatus(
+        `Exported shard_shapes.ttl · ${stats.distinct_constraints} constraints preserved`
+        + (cleaned ? ` · ${cleaned} redundant item(s) removed` : "")
+      );
     } catch (error) {
       const panel = byId("validation-panel");
       if (panel) {
         panel.className = "validation-panel shape-error";
-        panel.textContent = `Astrea merge failed:\n${error.message}`;
+        panel.textContent = `Shape export failed:\n${error.message}`;
       }
-      setStatus("Astrea merge failed");
+      setStatus("Shape export failed");
     } finally {
       btn.disabled = false;
     }
@@ -105,16 +96,98 @@ function wireExport(buttonId, getNodeShapes) {
 /* ---------- session import / export ---------- */
 const SESSION_EXAMPLES_MANIFEST = "examples/manifest.json";
 const PENDING_SESSION_WORKSPACE = "shard.pendingSessionWorkspace";
+let workspacePersistenceTimer = null;
 
-function sanitizedModelsForExport() {
+function workspaceStoreKey(workflow) {
+  return workflow === "rule" ? STORE.ruleWorkspace
+    : workflow === "batch" ? STORE.batchWorkspace : "";
+}
+
+function persistedWorkspace(workflow) {
+  const key = workspaceStoreKey(workflow);
+  return key ? loadJSON(key, null) : null;
+}
+
+function persistWorkspace(options) {
+  if (!options || typeof options.getWorkspaceState !== "function") return;
+  const key = workspaceStoreKey(options.workflow);
+  if (!key) return;
+  const workspace = options.getWorkspaceState();
+  if (workspace && typeof workspace === "object") saveJSON(key, workspace);
+}
+
+function scheduleWorkspacePersistence() {
+  document.dispatchEvent(new CustomEvent("shard-workspace-state-changed"));
+}
+
+async function localModelIsDownloaded(modelId) {
+  if (!modelId) return false;
+  try {
+    const status = await fetchJSON(SERVICES.localModelStatus, {
+      method: "POST",
+      body: JSON.stringify({ model_id: modelId }),
+    }, { label: `Check local model '${modelId}'`, timeoutMs: 25000 });
+    return Boolean(status.downloaded);
+  } catch {
+    return false;
+  }
+}
+
+async function sanitizedModelsForExport() {
   const m = getModels();
+  let llmModel = m.llmModel;
+  let embeddingModel = m.embeddingModel;
+  if (m.provider === "huggingface") {
+    const availability = await Promise.all([
+      localModelIsDownloaded(llmModel),
+      localModelIsDownloaded(embeddingModel),
+    ]);
+    if (!availability[0]) llmModel = "";
+    if (!availability[1]) embeddingModel = "";
+  }
   return {
     provider: m.provider,
-    llmModel: m.llmModel,
-    embeddingModel: m.embeddingModel,
+    llmModel,
+    embeddingModel,
     temperature: m.temperature,
     customModels: m.customModels,
+    credentialsIncluded: false,
   };
+}
+
+async function importedModels(payloadModels, options = {}) {
+  const current = getModels();
+  if (!payloadModels || options.preserveCurrentModels) return current;
+
+  const requestedProvider = String(payloadModels.provider || "");
+  const provider = MODEL_CATALOG[requestedProvider] && providerIsEnabled(requestedProvider)
+    ? requestedProvider : current.provider;
+  const customModels = sessionHas(payloadModels, "customModels")
+    ? normaliseCustomModels(payloadModels.customModels)
+    : current.customModels;
+  const portable = mergeModels(current, {
+    provider,
+    temperature: sessionHas(payloadModels, "temperature")
+      ? clampTemperature(payloadModels.temperature) : current.temperature,
+    customModels,
+  });
+  for (const key of ["llmModel", "embeddingModel"]) {
+    const imported = normalizeModelId(provider, payloadModels[key]);
+    portable[key] = imported || (provider === current.provider ? current[key] : "");
+  }
+
+  // Provider credentials remain local to this browser and are never imported.
+  portable.databricks = current.databricks;
+  portable.huggingface = current.huggingface;
+  if (provider === "huggingface") {
+    const availability = await Promise.all([
+      localModelIsDownloaded(portable.llmModel),
+      localModelIsDownloaded(portable.embeddingModel),
+    ]);
+    if (!availability[0]) portable.llmModel = "";
+    if (!availability[1]) portable.embeddingModel = "";
+  }
+  return portable;
 }
 
 function sessionHas(payload, key) {
@@ -140,23 +213,35 @@ function savePendingSessionWorkspace(workspace, sourceLabel) {
 
 function restorePendingSessionWorkspace(options) {
   const raw = sessionStorage.getItem(PENDING_SESSION_WORKSPACE);
-  if (!raw) return;
+  if (!raw) return false;
   try {
     const pending = JSON.parse(raw);
     const workspace = pending && pending.workspace;
-    if (!workspace || workspace.workflow !== options.workflow) return;
+    if (!workspace || workspace.workflow !== options.workflow) return false;
     if (typeof options.applyWorkspaceState === "function") {
       options.applyWorkspaceState(workspace);
     }
+    const key = workspaceStoreKey(options.workflow);
+    if (key) saveJSON(key, workspace);
     sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
     setStatus(`${pending.sourceLabel || "Session"} imported`);
+    return true;
   } catch (error) {
     sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
     setStatus(`Could not restore session workspace: ${error.message}`);
+    return false;
   }
 }
 
-function importSessionPayload(payload, options = {}) {
+function restorePersistedWorkspace(options) {
+  if (!options || typeof options.applyWorkspaceState !== "function") return false;
+  const workspace = persistedWorkspace(options.workflow);
+  if (!workspace || workspace.workflow !== options.workflow) return false;
+  options.applyWorkspaceState(workspace);
+  return true;
+}
+
+async function importSessionPayload(payload, options = {}) {
   if (!payload || payload.application !== "SHARD") {
     throw new Error("The selected file is not a SHARD session.");
   }
@@ -172,9 +257,15 @@ function importSessionPayload(payload, options = {}) {
       Array.isArray(payload.shapeValidationProfiles) ? payload.shapeValidationProfiles : [],
     );
   }
-  if (sessionHas(payload, "astreaBaseline")) {
-    setAstreaBaseline(payload.astreaBaseline && payload.astreaBaseline.content
-      ? payload.astreaBaseline : null);
+  if (sessionHas(payload, "astreaBaselines")) {
+    importAstreaBaselines(payload.astreaBaselines);
+  }
+  if (payload.astreaBaseline && payload.astreaBaseline.content) {
+    setAstreaBaseline(payload.astreaBaseline);
+  } else if (sessionHas(payload, "astreaBaseline")) {
+    // A legacy null value means that the session contributes no baseline. It
+    // must not evict a reusable baseline already cached for this ontology.
+    removeStoredValue(STORE.astreaBaseline);
   }
   if (payload.astreaMergeTechnique) {
     setAstreaMergeTechnique(payload.astreaMergeTechnique, { render: false });
@@ -185,16 +276,7 @@ function importSessionPayload(payload, options = {}) {
     setAstreaMergeMode(payload.astreaMergeMode);
   }
   if (payload.models) {
-    const current = getModels();
-    const pick = (key, fallback) => sessionHas(payload.models, key)
-      ? payload.models[key] : fallback;
-    saveJSON(STORE.models, mergeModels(current, {
-      provider: pick("provider", current.provider),
-      llmModel: pick("llmModel", current.llmModel),
-      embeddingModel: pick("embeddingModel", current.embeddingModel),
-      temperature: clampTemperature(pick("temperature", current.temperature)),
-      customModels: pick("customModels", current.customModels),
-    }));
+    saveJSON(STORE.models, await importedModels(payload.models, options));
   }
 
   const sourceLabel = options.sourceLabel || "Session";
@@ -275,9 +357,10 @@ function createSessionImportMenu(importBtn, importInput, options) {
             const response = await fetch(sessionUrl);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const payload = await response.json();
-            importSessionPayload(payload, {
+            await importSessionPayload(payload, {
               workflow: options.workflow,
               sourceLabel: example.title || "Example session",
+              preserveCurrentModels: true,
             });
           } catch (error) {
             button.disabled = false;
@@ -301,6 +384,7 @@ function wireSessionControls(options = {}) {
   const importInput = byId("session-file");
 
   if (exportBtn) exportBtn.addEventListener("click", async () => {
+    exportBtn.disabled = true;
     const payload = {
       application: "SHARD",
       version: 3,
@@ -309,9 +393,10 @@ function wireSessionControls(options = {}) {
       accepted: getAccepted(),
       shapeValidationProfiles: getShapeValidationProfiles(),
       astreaBaseline: getAstreaBaseline(),
+      astreaBaselines: getAstreaBaselines(),
       astreaUseMode: getAstreaUseMode(),
       astreaMergeTechnique: getAstreaMergeTechnique(),
-      models: sanitizedModelsForExport(),
+      models: await sanitizedModelsForExport(),
       workspace: typeof options.getWorkspaceState === "function"
         ? options.getWorkspaceState() : null,
     };
@@ -332,6 +417,8 @@ function wireSessionControls(options = {}) {
       }
     } catch (e) {
       setStatus(`Could not export session: ${e.message}`);
+    } finally {
+      exportBtn.disabled = false;
     }
   });
 
@@ -342,7 +429,7 @@ function wireSessionControls(options = {}) {
       if (!file) return;
       try {
         const payload = JSON.parse(await file.text());
-        importSessionPayload(payload, {
+        await importSessionPayload(payload, {
           workflow: options.workflow,
           sourceLabel: file.name,
         });
@@ -354,10 +441,39 @@ function wireSessionControls(options = {}) {
     });
   }
 
-  restorePendingSessionWorkspace(options);
+  const queuePersistence = () => {
+    if (workspacePersistenceTimer) clearTimeout(workspacePersistenceTimer);
+    workspacePersistenceTimer = setTimeout(() => persistWorkspace(options), 180);
+  };
+  document.addEventListener("input", queuePersistence, true);
+  document.addEventListener("change", queuePersistence, true);
+  document.addEventListener("shard-workspace-state-changed", queuePersistence);
+  window.addEventListener("beforeunload", () => persistWorkspace(options));
+  queueMicrotask(() => {
+    if (!restorePendingSessionWorkspace(options)) restorePersistedWorkspace(options);
+    queuePersistence();
+  });
 }
 
 /* ---------- copy / validate ---------- */
+const copyFeedbackTimers = new WeakMap();
+
+function showCopyFeedback(button, copied, durationMs = 2000) {
+  if (!button) return;
+  const previousTimer = copyFeedbackTimers.get(button);
+  if (previousTimer) clearTimeout(previousTimer);
+  const defaultLabel = button.dataset.copyDefaultLabel || button.textContent || "Copy";
+  button.dataset.copyDefaultLabel = defaultLabel;
+  button.textContent = copied ? "Copied" : "Copy failed";
+  button.classList.toggle("copy-feedback-active", copied);
+  button.setAttribute("aria-live", "polite");
+  copyFeedbackTimers.set(button, setTimeout(() => {
+    button.textContent = defaultLabel;
+    button.classList.remove("copy-feedback-active");
+    copyFeedbackTimers.delete(button);
+  }, durationMs));
+}
+
 async function copyToClipboard(text) {
   try { await navigator.clipboard.writeText(text); return true; }
   catch { return false; }
@@ -393,9 +509,13 @@ function wireReset(buttonId) {
     removeStoredValue(STORE.accepted);
     removeStoredValue(STORE.shapeProfiles);
     removeStoredValue(STORE.astreaBaseline);
+    removeStoredValue(STORE.astreaBaselines);
     removeStoredValue(STORE.astreaUseMode);
     removeStoredValue(STORE.astreaMergeTechnique);
     removeStoredValue(STORE.astreaMergeMode);
+    removeStoredValue(STORE.ruleWorkspace);
+    removeStoredValue(STORE.batchWorkspace);
+    sessionStorage.removeItem(PENDING_SESSION_WORKSPACE);
     location.reload();
   });
 }

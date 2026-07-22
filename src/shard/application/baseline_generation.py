@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from shard.application.shape_validation import validate_shape_content
+from shard.baselines import parse_baseline_shapes
 from shard.domain.ontology import parse_ontology_graph
 from shard.integrations.astrea import generate_astrea_shapes
 from shard.observability import logger
@@ -27,6 +28,8 @@ def generate_astrea_baseline(payload: Dict[str, Any]) -> Dict[str, Any]:
     ontology_graph = parse_ontology_graph(ontology_content, ontology_filename)
     ontology_turtle = ontology_graph.serialize(format="turtle")
     result = generate_astrea_shapes(ontology_turtle)
+    baseline_graph = parse_baseline_shapes(result["shape_document"], "astrea.ttl")
+    result["shape_document"] = baseline_graph.serialize(format="turtle")
     validation = validate_shape_content(result["shape_document"], "", [])
     ontology_hash = sha256(ontology_content.encode("utf-8")).hexdigest()
     baseline_name = _baseline_filename(ontology_filename)

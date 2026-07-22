@@ -13,7 +13,6 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from shard.application.baseline_generation import generate_astrea_baseline
 from shard.application.batch_generation import generate_batch_shapes
-from shard.application.shape_merge import merge_shapes
 from shard.integrations.astrea import (
     AstreaResponseError,
     AstreaRateLimitError,
@@ -25,8 +24,6 @@ from shard.integrations.astrea import (
 ASTREA_USE_MODES = {"none", "evidence", "merge", "evidence-and-merge"}
 ASTREA_USE_MODE_ALIASES = {"baseline": "evidence", "both": "evidence-and-merge"}
 ASTREA_FAILURE_POLICIES = {"continue", "fail"}
-ASTREA_MERGE_STRATEGIES = {"generated-priority", "restrictive"}
-ASTREA_MERGE_STRATEGY_ALIASES = {"priority-llm": "generated-priority"}
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -257,9 +254,8 @@ def generate_batch_workflow(
     event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     generator: Callable[..., Dict[str, Any]] = generate_batch_shapes,
     baseline_generator: Callable[[Dict[str, Any]], Dict[str, Any]] = generate_astrea_baseline,
-    merger: Callable[[Dict[str, Any]], Dict[str, Any]] = merge_shapes,
 ) -> Dict[str, Any]:
-    """Run ontology-to-batch generation and optional Astrea merge in one call."""
+    """Generate a batch whose rule shapes already include requested Astrea merges."""
     request = normalize_workflow_payload(payload)
     if not str(request.get("ontology_content") or "").strip():
         raise ValueError("ontology.content is required.")
@@ -271,33 +267,14 @@ def generate_batch_workflow(
     astrea_status = _prepare_astrea(request, baseline_generator=baseline_generator)
     generation = generator(request, event_callback=event_callback)
 
-    merge_result = None
     final_shape_document = str(generation.get("shape_document") or "")
-    if astrea_status["effective_mode"] in {"merge", "evidence-and-merge"}:
-        merge_strategy = _normalized_alias_choice(
-            request.get("astrea_merge_technique"),
-            ASTREA_MERGE_STRATEGIES,
-            ASTREA_MERGE_STRATEGY_ALIASES,
-            "astrea.merge_strategy",
-            "generated-priority",
-        )
-        merge_payload = {
-            **request,
-            "generated_shapes": final_shape_document,
-            "generated_filename": "shard_shapes.ttl",
-            "technique": (
-                "priority-llm" if merge_strategy == "generated-priority" else merge_strategy
-            ),
-        }
-        merge_result = merger(merge_payload)
-        final_shape_document = str(merge_result.get("shape_document") or "")
 
     return {
         "workflow": "batch-to-shapes",
         "summary": generation.get("summary") or {},
         "generation": generation,
         "astrea": astrea_status,
-        "merge": merge_result,
+        "merge": None,
         "final_shape_document": final_shape_document,
     }
 
@@ -326,7 +303,6 @@ def generate_rule_workflow(
     event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     generator: Callable[..., Dict[str, Any]] = generate_batch_shapes,
     baseline_generator: Callable[[Dict[str, Any]], Dict[str, Any]] = generate_astrea_baseline,
-    merger: Callable[[Dict[str, Any]], Dict[str, Any]] = merge_shapes,
 ) -> Dict[str, Any]:
     """Resolve and generate one data constraint through the shared batch pipeline."""
     request = normalize_workflow_payload(payload)
@@ -343,7 +319,6 @@ def generate_rule_workflow(
         event_callback=event_callback,
         generator=generator,
         baseline_generator=baseline_generator,
-        merger=merger,
     )
 
     generation = _mapping(result.get("generation"))

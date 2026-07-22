@@ -18,7 +18,7 @@ DEPLOYMENT_PROFILE_ENV = "SHARD_DEPLOYMENT_PROFILE"
 LEGACY_DEPLOYMENT_PROFILE_ENV = "BR2SHACL_DEPLOYMENT_PROFILE"
 LOCAL_PROFILE = "local"
 PUBLIC_PROFILE = "public"
-PROJECT_REPOSITORY_URL = "https://github.com/citiususc/br2shacl-ui"
+PROJECT_REPOSITORY_URL = "https://github.com/citiususc/shard"
 HUGGINGFACE_PUBLIC_MESSAGE = (
     "Local inference is not available in this hosted version. "
     "Clone and run the project locally to use models on your own hardware."

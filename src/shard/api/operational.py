@@ -35,6 +35,7 @@ JOB_CREATION_OPERATIONS = {
 RATE_LIMITED_OPERATIONS = EXPENSIVE_OPERATIONS | {
     "ontology.parse",
     "shapes.validate",
+    "shapes.prepare-export",
     "shapes.merge",
     "models.local.status",
     "ontology.index.get",
@@ -218,6 +219,10 @@ def validate_operation_payload_size(
         shape_values.append(payload.get("shape"))
     for key in ("generated", "baseline"):
         document = payload.get(key)
+        if isinstance(document, Mapping):
+            shape_values.append(document.get("content"))
+    documents = payload.get("documents") or payload.get("shape_documents")
+    for document in documents if isinstance(documents, list) else []:
         if isinstance(document, Mapping):
             shape_values.append(document.get("content"))
     for content in shape_values:

@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "An Interactive Workbench for Ontology-Grounded SHACL Authoring from Data Constraints"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "CiTIUS, Universidade de Santiago de Compostela" },
 ]
 keywords = ["SHACL", "RDF", "OWL", "data constraints", "knowledge graphs"]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -41,15 +41,11 @@ local = [
   "torch",
   "transformers",
 ]
-dev = [
-  "coverage[toml]>=7.5",
-  "openapi-spec-validator>=0.7",
-]
 
 [project.urls]
-Repository = "https://github.com/citiususc/br2shacl-ui"
-Documentation = "https://github.com/citiususc/br2shacl-ui/tree/main/docs"
-Issues = "https://github.com/citiususc/br2shacl-ui/issues"
+Repository = "https://github.com/citiususc/shard"
+Documentation = "https://github.com/citiususc/shard/tree/main/docs"
+Issues = "https://github.com/citiususc/shard/issues"
 
 [project.scripts]
 shard = "shard.cli:main"
@@ -68,6 +64,12 @@ shard = [
 ]
 
 [tool.setuptools.data-files]
+"share/doc/shard" = [
+  ".env.example",
+  "README.md",
+  "CITATION.cff",
+  "docs/*.md",
+]
 "share/shard/frontend" = [
   "frontend/*.html",
 ]
@@ -88,11 +90,3 @@ shard = [
 "share/shard/frontend/assets/images" = [
   "frontend/assets/images/*.png",
 ]
-
-[tool.coverage.run]
-source = ["shard"]
-branch = true
-
-[tool.coverage.report]
-show_missing = true
-skip_covered = true

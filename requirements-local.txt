@@ -1,8 +1,0 @@
-# Optional SHARD local Hugging Face inference dependencies.
--r requirements.txt
-
-torch
-transformers
-accelerate
-sentence-transformers
-huggingface-hub

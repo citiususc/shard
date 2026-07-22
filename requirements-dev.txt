@@ -1,4 +1,0 @@
--r requirements.txt
-
-coverage[toml]>=7.5
-openapi-spec-validator>=0.7

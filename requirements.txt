@@ -1,15 +1,3 @@
-# SHARD core and remote-inference dependencies
-#
-# Core (always required)
-rdflib>=7.0
-pyshacl>=0.26
-
-# Remote inference and model adapters
-openai>=1.30
-httpx>=0.27
-langchain-core>=0.2
-
-# Business Rules HTML parsing
-beautifulsoup4>=4.12
-pydantic>=2.7
-python-dotenv>=1.0
+# Install SHARD with every production inference backend.
+# Dependency versions are declared once in pyproject.toml.
+.[local]

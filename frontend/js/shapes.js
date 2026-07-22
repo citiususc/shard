@@ -148,17 +148,72 @@ function wireShapeValidationProfileControls() {
   }
 }
 
-/* ---------- Astrea baseline evidence + final merge ---------- */
+/* ---------- Astrea baseline evidence + rule-focused merge ---------- */
 const ASTREA_USE_MODES = new Set(["none", "evidence", "merge", "evidence-and-merge"]);
 const ASTREA_MERGE_TECHNIQUES = new Set(["generated-priority", "restrictive"]);
 let astreaGenerationPromise = null;
 let astreaControlState = "idle";
 let astreaControlMessage = "";
 
-function getAstreaBaseline() { return loadJSON(STORE.astreaBaseline, null); }
+function astreaBaselineCache() {
+  const stored = loadJSON(STORE.astreaBaselines, {});
+  return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+}
+
+function normalizedAstreaBaseline(value) {
+  if (!value || !value.content) return null;
+  const ontologyHash = value.ontologyHash || value.ontology_hash;
+  return ontologyHash ? { ...value, ontologyHash } : null;
+}
+
+function migrateLegacyAstreaBaseline() {
+  const legacy = normalizedAstreaBaseline(loadJSON(STORE.astreaBaseline, null));
+  if (!legacy) return;
+  const cache = astreaBaselineCache();
+  if (!cache[legacy.ontologyHash]) {
+    cache[legacy.ontologyHash] = legacy;
+    saveJSON(STORE.astreaBaselines, cache);
+  }
+}
+
+function getAstreaBaselines() {
+  migrateLegacyAstreaBaseline();
+  return Object.values(astreaBaselineCache()).filter((value) => normalizedAstreaBaseline(value));
+}
+
+function importAstreaBaselines(values) {
+  const incoming = Array.isArray(values) ? values : Object.values(values || {});
+  const cache = astreaBaselineCache();
+  incoming.forEach((value) => {
+    const baseline = normalizedAstreaBaseline(value);
+    if (baseline) cache[baseline.ontologyHash] = baseline;
+  });
+  saveJSON(STORE.astreaBaselines, cache);
+}
+
+function getAstreaBaseline() {
+  migrateLegacyAstreaBaseline();
+  const ontology = getOntology();
+  if (!ontology || !ontology.contentHash) return null;
+  return normalizedAstreaBaseline(astreaBaselineCache()[ontology.contentHash]);
+}
+
 function setAstreaBaseline(value) {
-  if (value && value.content) saveJSON(STORE.astreaBaseline, value);
-  else removeStoredValue(STORE.astreaBaseline);
+  const baseline = normalizedAstreaBaseline(value);
+  const cache = astreaBaselineCache();
+  if (baseline) {
+    cache[baseline.ontologyHash] = baseline;
+    saveJSON(STORE.astreaBaselines, cache);
+    saveJSON(STORE.astreaBaseline, baseline);
+    return;
+  }
+
+  const ontology = getOntology();
+  if (ontology && ontology.contentHash && cache[ontology.contentHash]) {
+    delete cache[ontology.contentHash];
+    saveJSON(STORE.astreaBaselines, cache);
+  }
+  removeStoredValue(STORE.astreaBaseline);
 }
 
 function migrateLegacyAstreaSettings() {
@@ -272,8 +327,8 @@ function renderAstreaBaselineControls() {
     useControl.title = {
       none: "Do not use Astrea",
       baseline: "Send the ontology to external Astrea and use its shapes only as generation evidence",
-      merge: "Send the ontology to external Astrea and use its shapes only for the final output merge",
-      both: "Send the ontology to external Astrea and use its shapes as evidence and for the final merge",
+      merge: "Merge the matching Astrea fragment into each generated shape before human review",
+      both: "Use matching Astrea shapes as evidence and merge them before human review",
     }[mode];
   }
   if (mergeControl) {
@@ -396,7 +451,6 @@ async function ensureAstreaBaseline() {
 }
 
 async function refreshAstreaBaselineForOntology() {
-  if (getAstreaBaseline() && !currentAstreaBaseline()) setAstreaBaseline(null);
   setAstreaControlMessage("", "idle");
   renderAstreaBaselineControls();
   if (!getOntology()) return null;

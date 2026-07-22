@@ -31,6 +31,7 @@ from shard.application.batch_generation import (
 from shard.application.model_check import validate_model
 from shard.application.ontology_catalog import parse_ontology
 from shard.application.shape_generation import build_shape
+from shard.application.shape_export import prepare_shape_export
 from shard.application.shape_merge import merge_shapes
 from shard.application.shape_validation import (
     validate_shape_content,
@@ -299,6 +300,19 @@ def _handle_shape_operation(
             payload.get("prefixes", ""),
             validation_profiles_from_payload(payload),
         )
+        send_json(handler, 200, result, request_id=request_id)
+        return
+
+    if operation == "shapes.prepare-export":
+        try:
+            result = prepare_shape_export(payload)
+        except ValueError as exc:
+            send_json(handler, 400, {
+                "error": "invalid_request",
+                "code": "INVALID_SHAPE_EXPORT_INPUT",
+                "message": _redact_request_secrets(exc, payload),
+            }, request_id=request_id)
+            return
         send_json(handler, 200, result, request_id=request_id)
         return
 
@@ -786,6 +800,7 @@ def dispatch_operation(
         "baselines.astrea.generate",
         "shapes.build",
         "shapes.validate",
+        "shapes.prepare-export",
         "shapes.merge",
         "models.check",
     }:

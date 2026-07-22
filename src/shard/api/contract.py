@@ -162,6 +162,12 @@ ENDPOINTS: Tuple[EndpointSpec, ...] = (
         "Validates edited, imported or externally generated SHACL without invoking a generation model.",
     ),
     EndpointSpec(
+        "shapes.prepare-export", "POST", f"{API_PREFIX}/shapes/export", "/prepare-shape-export",
+        "shape-assurance", PRIMARY_ROLE, "json",
+        "Prepare reviewed SHACL fragments for a clean, lossless Turtle export.",
+        "Unions accepted SHACL fragments as RDF, removes only exact anonymous duplicates and unreferenced target-only NodeShapes, verifies that every distinct constraint is preserved, and validates the resulting document.",
+    ),
+    EndpointSpec(
         "baselines.astrea.generate", "POST", f"{API_PREFIX}/baselines/astrea",
         "/generate-astrea-baseline", "shape-assurance", PRIMARY_ROLE, "json",
         "Generate ontology-derived baseline shapes through the Astrea service.",
@@ -289,6 +295,7 @@ _FRONTEND_OPERATIONS = {
     "resolve_rule": "rules.resolve-targets",
     "build": "shapes.build",
     "validate": "shapes.validate",
+    "export_shapes": "shapes.prepare-export",
     "astrea": "baselines.astrea.generate",
     "merge": "shapes.merge",
     "validate_model": "models.check",
@@ -302,6 +309,7 @@ _SPLIT_SERVICE_ORIGINS = {
     "rules.resolve-targets": "http://127.0.0.1:9104",
     "shapes.build": "http://127.0.0.1:9102",
     "shapes.validate": "http://127.0.0.1:9102",
+    "shapes.prepare-export": "http://127.0.0.1:9102",
     "baselines.astrea.generate": "http://127.0.0.1:9102",
     "shapes.merge": "http://127.0.0.1:9102",
     "models.check": "http://127.0.0.1:9102",
