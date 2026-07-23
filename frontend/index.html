@@ -36,12 +36,12 @@
       <section class="hero">
         <div class="hero-main">
           <div class="hero-copy">
-            <p class="hero-kicker">An Interactive Workbench for Ontology-Grounded SHACL Authoring from Data Constraints</p>
-            <h1 class="hero-title">Turn business knowledge into reviewable SHACL shapes.</h1>
+            <p class="hero-kicker">Ontology-grounded SHACL authoring</p>
+            <h1 class="hero-title">SHARD</h1>
             <p class="lead">
-              Generate SHACL validation shapes from an OWL ontology and its data constraints.
-              Work one constraint at a time, or process a structured batch of data constraints into a queue of
-              shapes you can inspect, edit, validate and export.
+              An interactive workbench that turns natural-language data constraints into ontology-grounded
+              SHACL shapes. Work on one constraint at a time, or process a structured batch into shapes you can
+              inspect, edit, validate and export.
             </p>
             <div class="hero-actions">
               <a class="github-repository-link" href="https://github.com/citiususc/shard" target="_blank" rel="noopener noreferrer">
@@ -52,62 +52,67 @@
                 <img src="assets/images/citius-logo.png" alt="CITIUS — Centro Singular de Investigación en Tecnoloxías Intelixentes">
               </div>
             </div>
-            <div class="hero-stats" aria-label="Shared workflow capabilities">
-              <span>Shared ontology</span>
-              <span>Editable Turtle</span>
-              <span>Model-assisted review</span>
-            </div>
-          </div>
-
-          <div class="hero-preview" aria-label="SHARD workflow preview">
-            <div class="preview-window">
-              <div class="preview-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-              <div class="preview-line strong">Data constraint</div>
-              <div class="preview-line">Every Track must define exactly one nominal gauge.</div>
-              <div class="preview-flow">
-                <span>Ontology</span>
-                <span>Terms</span>
-                <span>SHACL</span>
+            <div class="authoring-stages" aria-label="SHARD authoring process">
+              <div class="authoring-stage">
+                <span class="stage-number" aria-hidden="true">01</span>
+                <div>
+                  <strong>Ground</strong>
+                  <p>Resolve classes, properties and related terms directly from the supplied ontology.</p>
+                </div>
               </div>
-              <pre class="preview-code">@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; .
+              <div class="authoring-stage">
+                <span class="stage-number" aria-hidden="true">02</span>
+                <div>
+                  <strong>Generate</strong>
+                  <p>Build SHACL constraints from grounded context, with repair and optional Astrea evidence.</p>
+                </div>
+              </div>
+              <div class="authoring-stage">
+                <span class="stage-number" aria-hidden="true">03</span>
+                <div>
+                  <strong>Review</strong>
+                  <p>Edit, validate and approve the resulting shapes before exporting Turtle.</p>
+                </div>
+              </div>
+            </div>
+          </div>
 
-ex:TrackShape a sh:NodeShape ;
-  sh:targetClass ex:Track ;
-  sh:property [
-    sh:path ex:nominalGauge ;
-    sh:minCount 1 ;
-    sh:maxCount 1 ;
-  ] .</pre>
+          <div class="hero-preview" aria-label="SHARD demonstration video">
+            <div class="demo-video">
+              <iframe
+                src="https://www.youtube-nocookie.com/embed/ya7Iq_wifPk"
+                title="SHARD demonstration video"
+                loading="lazy"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allowfullscreen></iframe>
             </div>
           </div>
         </div>
 
-        <div class="cards workflow-cards">
-          <a class="card workflow-card" href="rule.html">
-            <span class="card-arrow" aria-hidden="true"></span>
-            <p class="step">Workflow 1</p>
-            <h2 class="flow-label"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></h2>
-            <p>Write a data constraint, pick the ontology target, and generate a single SHACL
-               shape you can edit, validate and accept.</p>
-            <ul class="card-list">
-              <li>Semantic ontology-term ranking</li>
-              <li>Target-aware generation context</li>
-              <li>Fast review before accepting</li>
-            </ul>
-          </a>
-          <a class="card workflow-card" href="batch.html">
-            <span class="card-arrow" aria-hidden="true"></span>
-            <p class="step">Workflow 2</p>
-            <h2 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Shapes</span></h2>
-            <p>Upload a structured batch of data constraints (.html or .md). The pipeline
-               resolves each extracted rule and streams generated shapes for review.</p>
-            <ul class="card-list">
-              <li>Batch validation and rule indexing</li>
-              <li>Shape queue with validation status</li>
-              <li>Export accepted Turtle shapes</li>
-            </ul>
-          </a>
-        </div>
+        <section class="workflow-section" aria-labelledby="workflow-heading">
+          <div class="workflow-heading">
+            <div>
+              <p>Authoring workflows</p>
+              <h2 id="workflow-heading">Start with one constraint or process a complete batch.</h2>
+            </div>
+            <p>Both workflows share the same ontology grounding, validation and human-review foundation.</p>
+          </div>
+          <div class="cards workflow-cards">
+            <a class="card workflow-card" href="rule.html">
+              <span class="card-arrow" aria-hidden="true"></span>
+              <h3 class="flow-label"><span>Rule</span><span class="flow-arrow" aria-hidden="true"></span><span>Shape</span></h3>
+              <p>Resolve one natural-language data constraint against an ontology, then generate a SHACL shape
+                 that you can inspect, edit, validate and accept.</p>
+            </a>
+            <a class="card workflow-card" href="batch.html">
+              <span class="card-arrow" aria-hidden="true"></span>
+              <h3 class="flow-label"><span>Batch</span><span class="flow-arrow" aria-hidden="true"></span><span>Shapes</span></h3>
+              <p>Upload a structured batch of data constraints. SHARD resolves each constraint and streams the
+                 generated shapes into a review queue before export.</p>
+            </a>
+          </div>
+        </section>
       </section>
     </main>
 
