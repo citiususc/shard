@@ -16,8 +16,9 @@ REDOC_CSP = (
 
 def redoc_document(openapi_url: str) -> str:
     """Return a minimal ReDoc page bound to the local OpenAPI URL."""
-    safe_url = escape(openapi_url, quote=True)
-    spec_url = json.dumps(openapi_url)
+    resolved_url = str(openapi_url or "openapi.json")
+    safe_url = escape(resolved_url, quote=True)
+    spec_url = json.dumps(resolved_url)
     return f"""<!doctype html>
 <html lang="en">
 <head>

@@ -114,7 +114,9 @@ location /shard/ {
 
 The exact SSE location is placed first so nginx does not buffer generation
 events. The trailing slash in the general `proxy_pass` removes the public
-`/shard/` prefix.
+`/shard/` prefix. Swagger UI and ReDoc resolve `openapi.json` relative to their
+published URL, so the documentation continues to work when the application is
+mounted below this prefix.
 
 ## Operational Safeguards
 

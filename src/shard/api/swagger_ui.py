@@ -27,8 +27,8 @@ SWAGGER_UI_CSP = (
 
 def swagger_ui_document(openapi_url: str) -> str:
     """Return a Swagger UI page bound to the deployment's OpenAPI document."""
-    safe_href = escape(str(openapi_url or "/api/v1/openapi.json"), quote=True)
-    spec_url = json.dumps(str(openapi_url or "/api/v1/openapi.json"))
+    safe_href = escape(str(openapi_url or "openapi.json"), quote=True)
+    spec_url = json.dumps(str(openapi_url or "openapi.json"))
     version = SWAGGER_UI_VERSION
     return f"""<!doctype html>
 <html lang="en">
@@ -173,7 +173,7 @@ def swagger_ui_document(openapi_url: str) -> str:
     </div>
     <nav class="shard-api-links" aria-label="API documentation links">
       <a class="shard-api-link" href="{safe_href}">OpenAPI JSON</a>
-      <a class="shard-api-link" href="/api/v1">API root</a>
+      <a class="shard-api-link" id="api-root-link" href=".">API root</a>
     </nav>
   </header>
   <main id="swagger-ui" aria-label="Swagger API documentation"></main>
@@ -183,27 +183,52 @@ def swagger_ui_document(openapi_url: str) -> str:
   <script src="{SWAGGER_UI_ORIGIN}/swagger-ui-dist@{version}/swagger-ui-bundle.js" integrity="{SWAGGER_UI_BUNDLE_INTEGRITY}" crossorigin="anonymous"></script>
   <script>
     window.addEventListener("load", function () {{
+      var apiRootPath = window.location.pathname.replace(/\\/docs\\/?$/, "");
+      document.getElementById("api-root-link").href = apiRootPath || "/";
+
       if (typeof window.SwaggerUIBundle !== "function") {{
         document.getElementById("swagger-ui").innerHTML = '<div class="swagger-load-error">Swagger UI assets could not be loaded. <a href="{safe_href}">Open the raw OpenAPI document</a>.</div>';
         return;
       }}
-      window.ui = window.SwaggerUIBundle({{
-        url: {spec_url},
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-        displayOperationId: true,
-        displayRequestDuration: true,
-        docExpansion: "list",
-        filter: true,
-        requestSnippetsEnabled: true,
-        showCommonExtensions: true,
-        showExtensions: true,
-        syntaxHighlight: {{ activate: true, theme: "agate" }},
-        tryItOutEnabled: false,
-        validatorUrl: null,
-        presets: [window.SwaggerUIBundle.presets.apis],
-        layout: "BaseLayout"
-      }});
+
+      fetch({spec_url})
+        .then(function (response) {{
+          if (!response.ok) {{
+            throw new Error("OpenAPI request failed with status " + response.status);
+          }}
+          return response.json();
+        }})
+        .then(function (spec) {{
+          var canonicalPrefix = spec["x-shard-api-prefix"] || "/api/v1";
+          var publicBase = apiRootPath.endsWith(canonicalPrefix)
+            ? apiRootPath.slice(0, -canonicalPrefix.length)
+            : "";
+          spec.servers = [{{
+            url: publicBase || "/",
+            description: "Current SHARD deployment"
+          }}];
+
+          window.ui = window.SwaggerUIBundle({{
+            spec: spec,
+            dom_id: "#swagger-ui",
+            deepLinking: true,
+            displayOperationId: true,
+            displayRequestDuration: true,
+            docExpansion: "list",
+            filter: true,
+            requestSnippetsEnabled: true,
+            showCommonExtensions: true,
+            showExtensions: true,
+            syntaxHighlight: {{ activate: true, theme: "agate" }},
+            tryItOutEnabled: false,
+            validatorUrl: null,
+            presets: [window.SwaggerUIBundle.presets.apis],
+            layout: "BaseLayout"
+          }});
+        }})
+        .catch(function () {{
+          document.getElementById("swagger-ui").innerHTML = '<div class="swagger-load-error">The OpenAPI document could not be loaded. <a href="{safe_href}">Open the raw OpenAPI document</a>.</div>';
+        }});
     }});
   </script>
 </body>

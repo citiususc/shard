@@ -157,7 +157,7 @@ def dispatch_api_request(handler) -> bool:
             send_html(
                 handler,
                 200,
-                swagger_ui_document(f"{API_PREFIX}/openapi.json"),
+                swagger_ui_document("openapi.json"),
                 request_id=request_id,
                 content_security_policy=SWAGGER_UI_CSP,
             )
@@ -165,7 +165,7 @@ def dispatch_api_request(handler) -> bool:
             send_html(
                 handler,
                 200,
-                redoc_document(f"{API_PREFIX}/openapi.json"),
+                redoc_document("openapi.json"),
                 request_id=request_id,
                 content_security_policy=REDOC_CSP,
             )
